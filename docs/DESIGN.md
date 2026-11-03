@@ -117,7 +117,7 @@ Paths are relative to the decompiled `net/minecraft/`. Line numbers are from the
 - PrimedTnt is constructed in three places: `TntBlock.java:77` (explosion chain, with random fuse), `TntBlock.java:89` (ignited, no random fuse), `DispenseItemBehavior.java:212` (dispenser, kick only).
 - **Decision: a mod-owned random with a fixed seed.** During a recording and during every ghost run, TNT priming (the kick draw at `PrimedTnt.java:68` and the fuse draw at `TntBlock.java:78`) draws from this mod random instead of `level.getRandom()`. It is reset to the same seed at the start of each run. Same seed in both runs means the ghost-vs-real check can match exactly. "kick off" means: draw from that random, discard the kick value, apply 0 (so the draw count and order stay identical to "kick on").
 - Outside a run the vanilla random is used untouched. Side effect to accept: while recording, the real level's own random is not advanced by TNT priming, so the world's random sequence afterwards differs from a world where the machine was fired for real.
-- **Finding (now ruled, see "Rulings" R1):** TNT explosions also use the level's random directly: `ServerExplosion.java:135` (ray power `0.7F + random.nextFloat()*0.6F`), `:215` (`Util.shuffle(targetBlocks, level.random)`), `:228` (fire placement). They read the `protected final RandomSource random` **field** of `Level` (`Level.java:124`, `RandomSource.create()`, unseeded), not `getRandom()`. The real overworld and the ghost have different `random` instances, so unless these three draws are also taken from the seeded mod random, explosion block-destruction can differ between ghost and real and the exact check cannot hold for machines that blow up blocks. Machines that only launch TNT and do not rely on explosions breaking blocks are unaffected.
+- **Finding (ruled R1, implemented in 1b):** TNT explosions also use the level's random directly: `ServerExplosion.java:135` (ray power `0.7F + random.nextFloat()*0.6F`), `:215` (`Util.shuffle(targetBlocks, level.random)`), `:228` (fire placement). They read the `protected final RandomSource random` **field** of `Level` (`Level.java:124`, `RandomSource.create()`, unseeded), not `getRandom()`. The real overworld and the ghost have different `random` instances, so unless these three draws are also taken from the seeded mod random, explosion block-destruction can differ between ghost and real and the exact check cannot hold for machines that blow up blocks. Machines that only launch TNT and do not rely on explosions breaking blocks are unaffected.
 
 ### 7. Mappings, Java, Loom  [verified]
 - **No mappings.** Yarn returns no builds for 26.2 and Mojang publishes no `client_mappings` for it; Loom is used with `minecraft "com.mojang:minecraft:26.2"` and plain `implementation` dependencies (no `modImplementation`, no `mappings` line).
@@ -161,6 +161,55 @@ An entity that is not yet registered in the level (`level.getEntity(uuid) != ent
 
 ### Negative tests (kept as notes)
 The mutation checks and the wrong-method-name check above are the negative tests for 1a. Rerun them whenever the undo log changes: break the thing on purpose, confirm `runGameTest` fails for that reason, restore it. A pass alone proves little.
+
+---
+
+## Build step 1b: cause tracking (implemented)
+Code: `record/CauseTracker.java`, `record/ChainEvent.java`, `record/WatchedRandom.java`; hooks in `mixin/`. Tests: `CauseTrackingTest.unrelatedClockNeverInFootprint`, `CauseTrackingTest.seededChainRepeatsExactly`.
+
+**Rule.** Work is chain work while chain context is on. The trigger runs with it on (`runAsChain`). Synchronous work below a chain call inherits it (neighbour and shape updates finish before the call returns). Deferred work gets it at its entry point if chain work created or touched the deferred thing:
+| Deferred thing | Joins the chain when | Hook (26.2) | Runs as chain at |
+|---|---|---|---|
+| scheduled block/fluid tick | queued in chain context; if an equal (type, pos) tick is already pending (`LevelChunkTicks.java:54` drops ours), the pending one joins ("merged") | `LevelChunkTicks.schedule` HEAD (`:53`) | `LevelTicks.runCollectedTicks`, the `output.accept` call (`:190`), matched by identity of the `ScheduledTick`, else by merged (type, pos) |
+| block event (pistons) | queued in chain context (the queue is a set, `ServerLevel.java:217`; an equal queued event joins) | `ServerLevel.blockEvent` HEAD (`:1247`) | `ServerLevel.doBlockEvent` (`:1278`), wrapped |
+| entity | spawned (`addEntity` RETURN, `:992`), moved (`Entity.setPosRaw`, `:3794`), velocity changed or pushed (`setDeltaMovement`, `:3722`; `push` ends there, `:1908-1910`), or hurt (`LivingEntity.hurtServer`, `:1169`) in chain context; players never | | `ServerLevel.tickNonPassenger` (`:822`) / `tickPassenger` (`:836`), wrapped |
+| block entity | put into a chunk (`LevelChunk.setBlockEntity`, `:422`) or `setChanged()` (`BlockEntity.java:194`) in chain context | | `LevelChunk$BoundTickingBlockEntity.tick` (`:739`), wrapped |
+
+Everything else (players, mobs, random ticks, unrelated redstone) runs with context off: not in the event log, not in the footprint.
+
+**Event log** (`ChainEvent`, ticks relative to the start, no UUIDs): `WRITE` (block state change, or block entity `setChanged`), `TICK_SCHEDULED`/`TICK_RUN`, `BLOCK_EVENT_QUEUED`/`BLOCK_EVENT_RUN`, `ENTITY_TAGGED`, `ENTITY_STATE` (exact position and velocity of each chain entity after each of its ticks), `BLOCK_ENTITY_TAGGED`, `UNSEEDED_DRAW`. This is the log step 3 compares.
+**Footprint so far:** positions of chain `WRITE`s (destroyed blocks included, R1). Reads are step 1c.
+
+**Randomness (R1), implemented.** One `RandomSource.create(seed)` per tracker, created at `begin`. During chain work in the tracked level these sites draw from it: `PrimedTnt.java:68` (kick), `TntBlock.java:78` (short fuse), `ServerExplosion.java:135,215,228`. `Level.random` (`Level.java:124`) is wrapped in `WatchedRandom` at construction. It passes every call through unchanged (`LegacyRandomSource` overrides none of `RandomSource`'s default methods, so the draw semantics are identical) and reports any draw made during chain work as `UNSEEDED_DRAW` with its call site. That catches both `level.random` and `level.getRandom()`.
+Not done yet: "kick off" (draw, discard, apply 0); that comes with `/path kick` in 1d.
+
+**Unseeded draws found by the test machine** (all logged, none silently allowed):
+- `PistonBaseBlock.java:172`: piston extend sound pitch. Changes nothing in the world.
+- `Block.java:409-411` via `Mth.nextDouble` (`Mth.java:155`): `Block.popResource` jitters the spawn position of dropped items. So **items dropped by a chain explosion are not exact between runs**; the seed test leaves item entities out for this reason. Open: seed this site too, or keep items marked inexact.
+- Not seen: loot-table draws for explosion drops, item spawn velocity (26.2 `ItemEntity(Level, x, y, z, ItemStack)`, `ItemEntity.java:61`, does not draw from the level random).
+
+**Findings while testing**
+- At `LevelChunk.setBlockEntity` HEAD the block entity's own level is still null (the method sets it), so the hook uses the chunk's level. The first version missed the moving piston because of this.
+- The default Fabric test structure is 8x8x8 (`fabric-gametest-api-v1:gametest/structure/empty.snbt`). A longer machine can reach a chunk that is not entity-ticking: the primed TNT then never ticked (seen once; depends on where the test lands). The tests force-load the area and wait for `isPositionEntityTicking` before recording. Once, the TNT froze for 21 ticks while the forced ticket was still being applied. This is finding 5 in practice: chunk state changes the path.
+
+**Verification done**
+- Both tests pass three runs in a row; `./gradlew build` passes. The clock really runs during the recording (the undo log sees the observers write) and none of its positions are in the footprint or the event log.
+- Break-it checks, each made `runGameTest` exit 1 for its own reason, then restored:
+  1. Filter broken (every scheduled tick treated as chain): `unrelatedClockNeverInFootprint` fails, "clock block 0, 2, 4 is in the footprint".
+  2. Seeding off everywhere (`randomFor` returns the vanilla random): `seededChainRepeatsExactly` fails at the first TNT state (different kick).
+  3. Only the three explosion sites unseeded (kick still seeded): fails at event 109, an explosion `WRITE` (different destroyed block); the TNT path before it is identical.
+- `defaultRequire: 1` holds for the new mixins, so a wrong target fails start-up (checked for 1a; same config).
+
+**Known gaps (1b)**
+1. Merge marks are by (type, pos) for ticks and by value for block events. If a chain-marked pending tick or event is removed without running (`LevelTicks.clearArea`, `ServerLevel.java:1666`), a later unrelated one at the same key would be counted as chain.
+2. Ticks dropped because their chunk is not loaded (`LevelTicks.java:74-75`) are not logged.
+3. Callers of the static `BlockEntity.setChanged(Level, BlockPos, BlockState)` (`:200`) bypass the hook. Non-living entities that override `hurtServer` join only when moved, pushed or spawned.
+4. An entity built in chain context is tagged in its constructor (via `setPos`), even if it is never added. Harmless, but it uses an index number.
+5. Chain influence through work that runs with context off is not followed. Example: a mob or random tick reacting to a block the chain placed. This is the intended rule (those are "outside the chain"), but the ghost run will diverge there if it matters.
+6. `ENTITY_STATE` is logged every tick for every chain entity, items included. Log size is not limited yet.
+
+### Negative tests (kept as notes)
+Rerun the three break-it checks above whenever cause tracking changes.
 
 ---
 

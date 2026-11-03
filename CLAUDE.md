@@ -37,7 +37,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 | Session 1 setup (26.2, Loom 1.19, Java 25, Fabric API 0.161.0, headless game tests) | **done**: `./gradlew build` and `./gradlew runGameTest` pass; one smoke test |
 | `docs/DESIGN.md` with Version risk findings | **done** (see open decision below) |
 | 1a Undo log | **done**: `UndoLog` + 4 mixins, game test passes, mutation-checked (see DESIGN "Build step 1a"); known gaps listed there |
-| 1b Cause tracking (use Opus 5.5) | not started. Must also log "unseeded draw" (chain work reading `Level.random`, file:line); one mod-owned seeded `RandomSource` for TNT priming + the 3 `ServerExplosion` sites (DESIGN R1) |
+| 1b Cause tracking | **done**: `CauseTracker` (chain context through ticks, block events, entities, block entities), event log, write footprint, seeded chain random for R1 sites, `UNSEEDED_DRAW` logging; 2 game tests pass, 3 break-it checks (see DESIGN "Build step 1b"). Open: seed `Block.popResource` or mark items inexact |
 | 1c Read/write footprint | not started (hook `BlockCollisions`, record "no collision: chunk below FULL") |
 | 1d `/path machine` | not started |
 | 2 Ghost copy | not started. Decided: own `ServerLevel` subclass, no Fantasy (DESIGN finding 2 lists what to override) |

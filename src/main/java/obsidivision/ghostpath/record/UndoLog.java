@@ -88,6 +88,11 @@ public final class UndoLog {
         return this.blocks.size();
     }
 
+    /** True if the original state at {@code pos} was saved (something wrote to it during the recording). */
+    public boolean hasBlock(BlockPos pos) {
+        return this.blocks.containsKey(pos);
+    }
+
     public int entitySnapshotCount() {
         return this.entities.size();
     }

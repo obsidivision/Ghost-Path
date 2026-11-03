@@ -2,6 +2,7 @@ package obsidivision.ghostpath.mixin;
 
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.phys.Vec3;
+import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -14,6 +15,7 @@ public abstract class EntityMixin {
     @Inject(method = "setPosRaw", at = @At("HEAD"))
     private void ghostpath$beforeMove(double x, double y, double z, CallbackInfo ci) {
         this.ghostpath$touch();
+        this.ghostpath$chainTouch("moved");
     }
 
     /**
@@ -23,12 +25,20 @@ public abstract class EntityMixin {
     @Inject(method = "setDeltaMovement(Lnet/minecraft/world/phys/Vec3;)V", at = @At("HEAD"))
     private void ghostpath$beforeVelocityChange(Vec3 deltaMovement, CallbackInfo ci) {
         this.ghostpath$touch();
+        this.ghostpath$chainTouch("velocity"); // push(...) ends here too (Entity.java:1908-1910)
     }
 
     /** 26.2 Entity.java:3920 {@code public final void setRemoved(Entity.RemovalReason)}. HEAD: still intact. */
     @Inject(method = "setRemoved", at = @At("HEAD"))
     private void ghostpath$beforeRemoved(Entity.RemovalReason reason, CallbackInfo ci) {
         this.ghostpath$touch();
+    }
+
+    private void ghostpath$chainTouch(String why) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onEntityTouched((Entity) (Object) this, why);
+        }
     }
 
     private void ghostpath$touch() {

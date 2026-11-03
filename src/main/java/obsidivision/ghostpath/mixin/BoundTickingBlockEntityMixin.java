@@ -1,6 +1,9 @@
 package obsidivision.ghostpath.mixin;
 
 import net.minecraft.world.level.block.entity.BlockEntity;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,5 +28,12 @@ public abstract class BoundTickingBlockEntityMixin {
         if (log != null) {
             log.onBlockEntityAccess(this.blockEntity);
         }
+    }
+
+    /** Same method: a chain block entity (created or changed by chain work) ticks as chain work. */
+    @WrapMethod(method = "tick")
+    private void ghostpath$chainTick(Operation<Void> original) {
+        CauseTracker tracker = CauseTracker.active();
+        CauseTracker.within(tracker, tracker != null && tracker.isChainBlockEntity(this.blockEntity), original::call);
     }
 }

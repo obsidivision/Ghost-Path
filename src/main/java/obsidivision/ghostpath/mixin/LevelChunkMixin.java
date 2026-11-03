@@ -4,10 +4,12 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LevelChunk.class)
@@ -22,6 +24,23 @@ public abstract class LevelChunkMixin {
         UndoLog log = UndoLog.active();
         if (log != null) {
             log.onBlockChange((LevelChunk) (Object) this, pos);
+        }
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onBlockWrite((LevelChunk) (Object) this, pos, state);
+        }
+    }
+
+    /**
+     * 26.2 LevelChunk.java:422 {@code public void setBlockEntity(BlockEntity)}; addAndRegisterBlockEntity (:395-396),
+     * Level.setBlockEntity (Level.java:710-713) and block-entity creation on lookup (:382-384) all end here. A block
+     * entity created by chain work (such as a moving piston) is part of the chain.
+     */
+    @Inject(method = "setBlockEntity", at = @At("HEAD"))
+    private void ghostpath$beforeSetBlockEntity(BlockEntity blockEntity, CallbackInfo ci) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onBlockEntitySet(((LevelChunk) (Object) this).getLevel(), blockEntity);
         }
     }
 

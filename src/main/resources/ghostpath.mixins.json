@@ -3,10 +3,18 @@
   "package": "obsidivision.ghostpath.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "BlockEntityMixin",
     "BoundTickingBlockEntityMixin",
     "EntityMixin",
     "LevelChunkMixin",
-    "ServerLevelMixin"
+    "LevelChunkTicksMixin",
+    "LevelMixin",
+    "LevelTicksMixin",
+    "LivingEntityMixin",
+    "PrimedTntMixin",
+    "ServerExplosionMixin",
+    "ServerLevelMixin",
+    "TntBlockMixin"
   ],
   "injectors": {
     "defaultRequire": 1
