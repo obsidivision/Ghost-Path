@@ -23,6 +23,9 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 - `repo.maven.apache.org` returns HTTP 429 from the shared IP. `~/.gradle/init.d/central-mirror.gradle` (user level, not in the repo) rewrites it to `repo1.maven.org`; `settings.gradle` also lists repo1. If a build still hits a 429, just rerun: Gradle caches what it got.
 - A game-test mod only exists if `fabricApi.configureTests { createSourceSet = true }` is set (already is). Never trust "N tests passed" without checking that our test's name appears in the log.
 
+## Environment
+`fabric.mod.json` says `"environment": "*"` **only so the game tests load** on a dedicated headless server. The mod is meant to be used client-side in singleplayer (built-in server). Don't read `*` as a promise of dedicated-server or multiplayer support.
+
 ## Layout
 - `src/main` common code, `src/client` client-only code, `src/gametest` game tests (mod id `ghostpath-gametest`, entrypoint key `fabric-gametest`).
 
@@ -31,11 +34,14 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 |---|---|
 | Session 1 setup (26.2, Loom 1.19, Java 25, Fabric API 0.161.0, headless game tests) | **done**: `./gradlew build` and `./gradlew runGameTest` pass; one smoke test |
 | `docs/DESIGN.md` with Version risk findings | **done** (see open decision below) |
-| 1 Real recording (1a undo log, 1b cause tracking, 1c footprint, 1d `/path machine`) | not started |
-| 2 Ghost copy | not started. **Blocked on a decision:** Fantasy's runtime level mirrors the overworld game time (DESIGN finding 2) |
+| 1a Undo log | **done**: `UndoLog` + 4 mixins, game test passes, mutation-checked (see DESIGN "Build step 1a"); known gaps listed there |
+| 1b Cause tracking (use Opus 5.5) | not started |
+| 1c Read/write footprint | not started (hook `BlockCollisions`, record "no collision: chunk below FULL") |
+| 1d `/path machine` | not started |
+| 2 Ghost copy | not started. Decided: own `ServerLevel` subclass, no Fantasy (DESIGN finding 2 lists what to override) |
 | 3 Check ghost against real | not started |
 | 4 Live rerun | not started |
 | 5 Flight preview | not started |
 | 6 Inspector and dots | not started |
 
-Open: Fantasy vs own `ServerLevel` for the ghost (finding 2); TNT kick/RNG-draw handling (finding 6); entity-tick chunk gating check (finding 5).
+Open: explosion randomness (`ServerExplosion.java:135,215,228` read `Level.random` directly; DESIGN finding 6) needs a ruling before step 3 can match exactly; undo log gaps (scheduled ticks, block events) before 1d.

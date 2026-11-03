@@ -5,7 +5,7 @@
   "name": "Ghost Path game tests",
   "environment": "*",
   "entrypoints": {
-    "fabric-gametest": ["obsidivision.ghostpath.test.SmokeTest"]
+    "fabric-gametest": ["obsidivision.ghostpath.test.SmokeTest", "obsidivision.ghostpath.test.UndoLogTest"]
   },
   "depends": { "ghostpath": "*" }
 }
