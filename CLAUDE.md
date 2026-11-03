@@ -38,6 +38,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 | `docs/DESIGN.md` with Version risk findings | **done** (see open decision below) |
 | 1a Undo log | **done**: `UndoLog` + 4 mixins, game test passes, mutation-checked (see DESIGN "Build step 1a"); known gaps listed there |
 | 1b Cause tracking | **done**: `CauseTracker` (chain context through ticks, block events, entities, block entities; ticks/events by identity, R7), event log, write footprint, seeded chain random for TNT, explosions, item drops and chain-built entities' own randoms (R1, R6), `UNSEEDED_DRAW` with allowlist; 3 game tests pass, 6 break-it checks (see DESIGN "Build step 1b") |
+| Undo-log gaps (R4) | **done**: ticks and block events restored as at begin (remaining delays kept), hurt snapshot on all 54 `hurtServer` overrides plus non-NBT hurt state, container pre-change snapshot; `setChanged()` only detects (it runs after the change, see DESIGN); `UndoGapsTest` + 6 break-it checks |
 | 1c Read/write footprint | not started (hook `BlockCollisions`, record "no collision: chunk below FULL") |
 | 1d `/path machine` | not started |
 | 2 Ghost copy | not started. Decided: own `ServerLevel` subclass, no Fantasy (DESIGN finding 2 lists what to override) |
@@ -46,4 +47,4 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 | 5 Flight preview | not started |
 | 6 Inspector and dots | not started |
 
-Rulings R1-R9 are in DESIGN.md ("Rulings"). Randomness: seeded (R1, R6). Real recordings never force-load or change tickets (R9). To do before 1d: close the undo-log gaps (scheduled ticks, block events; entity snapshot on hurt/push/velocity; block entity snapshot on `setChanged()`). Step 2: `copyAreaFrom` only into an empty, loaded target and assert tick counts; reset `emptyTime` per ghost tick; ticket matching the real chunk level.
+Rulings R1-R9 are in DESIGN.md ("Rulings"). Randomness: seeded (R1, R6). Real recordings never force-load or change tickets (R9). Step 2: `copyAreaFrom` only into an empty, loaded target and assert tick counts; reset `emptyTime` per ghost tick; ticket matching the real chunk level.

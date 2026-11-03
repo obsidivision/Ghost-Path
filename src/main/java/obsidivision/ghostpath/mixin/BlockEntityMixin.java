@@ -2,6 +2,7 @@ package obsidivision.ghostpath.mixin;
 
 import net.minecraft.world.level.block.entity.BlockEntity;
 import obsidivision.ghostpath.record.CauseTracker;
+import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -19,6 +20,11 @@ public abstract class BlockEntityMixin {
         CauseTracker tracker = CauseTracker.active();
         if (tracker != null) {
             tracker.onBlockEntityChanged((BlockEntity) (Object) this);
+        }
+        // undo log (R4): setChanged() runs after the change, so a first touch seen here is a late snapshot (reported)
+        UndoLog log = UndoLog.active();
+        if (log != null) {
+            log.onBlockEntityChanged((BlockEntity) (Object) this);
         }
     }
 }

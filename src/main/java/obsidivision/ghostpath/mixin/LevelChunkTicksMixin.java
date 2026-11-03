@@ -7,6 +7,7 @@ import net.minecraft.world.ticks.LevelChunkTicks;
 import net.minecraft.world.ticks.SavedTick;
 import net.minecraft.world.ticks.ScheduledTick;
 import obsidivision.ghostpath.record.CauseTracker;
+import obsidivision.ghostpath.record.UndoLog;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -36,6 +37,15 @@ public abstract class LevelChunkTicksMixin<T> {
      * pending (:54). Every scheduled block/fluid tick ends here (LevelTicks.schedule, LevelTicks.java:71-79). HEAD, so we
      * can tell whether ours will be dropped as a duplicate; if so the pending tick object joins the chain instead.
      */
+    /** 26.2 LevelChunkTicks.java:58 {@code scheduleUnchecked}, reached from schedule (:55) when the tick is accepted. */
+    @Inject(method = "schedule", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/ticks/LevelChunkTicks;scheduleUnchecked(Lnet/minecraft/world/ticks/ScheduledTick;)V"))
+    private void ghostpath$accepted(ScheduledTick<T> tick, CallbackInfo ci) {
+        UndoLog log = UndoLog.active();
+        if (log != null) {
+            log.onTickScheduled(tick);
+        }
+    }
+
     @Inject(method = "schedule", at = @At("HEAD"))
     private void ghostpath$beforeSchedule(ScheduledTick<T> tick, CallbackInfo ci) {
         CauseTracker tracker = CauseTracker.active();

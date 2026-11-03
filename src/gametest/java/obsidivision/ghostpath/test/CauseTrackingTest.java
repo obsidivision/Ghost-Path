@@ -53,16 +53,25 @@ public class CauseTrackingTest {
         }
     }
 
-    /** Runs {@code then} once the whole machine area is entity-ticking (forced tickets take a few ticks to apply). */
+    /**
+     * Runs {@code then} once the whole machine area is entity-ticking. Forced chunks become entity-ticking after async
+     * chunk and entity-section loading, which takes real time, while game tests tick at full speed (no 50 ms sleep): the
+     * wait can be thousands of ticks, hence the large maxTicks (seen: >800 once).
+     */
     private static void whenEntityTicking(GameTestHelper helper, Runnable then) {
+        whenEntityTicking(helper, then, 0);
+    }
+
+    private static void whenEntityTicking(GameTestHelper helper, Runnable then, int waited) {
         boolean ready = true;
         for (BlockPos rel : List.of(new BlockPos(0, 2, 0), new BlockPos(14, 2, 0), new BlockPos(0, 2, 6), new BlockPos(14, 2, 6), TNT)) {
             ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(rel));
         }
         if (ready) {
+            LOG.info("[ghostpath] machine area entity-ticking after {} ticks", waited);
             then.run();
         } else {
-            helper.runAfterDelay(1, () -> whenEntityTicking(helper, then));
+            helper.runAfterDelay(1, () -> whenEntityTicking(helper, then, waited + 1));
         }
     }
 
@@ -93,7 +102,7 @@ public class CauseTrackingTest {
      * line the whole time. It writes blocks and schedules ticks every few ticks during the recording, but none of that
      * may enter the chain: no write, no event at any clock position.
      */
-    @GameTest(maxTicks = 800, padding = 24, environment = "ghostpath-gametest:cause_clock")
+    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:cause_clock")
     public void unrelatedClockNeverInFootprint(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);
@@ -156,7 +165,7 @@ public class CauseTrackingTest {
      * every tick (the primed TNT and the items the blast drops), and every unseeded draw. Item drop positions and the
      * items' own randoms are seeded (1b follow-up ruling), so items must repeat exactly too.
      */
-    @GameTest(maxTicks = 1000, padding = 24, environment = "ghostpath-gametest:cause_seed")
+    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:cause_seed")
     public void seededChainRepeatsExactly(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);

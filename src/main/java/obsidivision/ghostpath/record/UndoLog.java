@@ -1,7 +1,12 @@
 package obsidivision.ghostpath.record;
 
+import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -16,15 +21,28 @@ import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityProcessor;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.BlockEventData;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.level.storage.TagValueOutput;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.storage.ValueInput;
+import net.minecraft.world.ticks.LevelChunkTicks;
+import net.minecraft.world.ticks.LevelTicks;
+import net.minecraft.world.ticks.ScheduledTick;
+import obsidivision.ghostpath.mixin.LevelTicksAccessor;
+import obsidivision.ghostpath.mixin.LivingEntityAccessor;
+import obsidivision.ghostpath.mixin.ServerLevelAccessor;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Undo log for one recording (build step 1a).
@@ -40,11 +58,14 @@ import org.jspecify.annotations.Nullable;
  * {@link #restore()} puts everything back with neighbour updates, shape updates, onPlace and block-entity
  * side effects (such as a chest dropping its items) suppressed.
  *
- * <p>Known gaps, tracked in docs/DESIGN.md: pending scheduled ticks, queued block events, the level random and
- * non-positional entity changes (health, equipment) of an entity that neither moved nor was removed are not restored.
- * Players are never touched.
+ * <p>Also restored (R4): every pending block and fluid tick of the level, as it was at {@link #begin} (each with its
+ * remaining delay kept, so the world resumes as if paused), and the queued block events. Entities are also snapshotted
+ * when hurt; container block entities before setItem/removeItem. A block entity first seen at {@code setChanged()}
+ * is already changed (vanilla calls it afterwards): it is snapshotted anyway and reported in {@link #lateBlockEntities()}.
+ * Not restored: game time and the level random (R4). Players are never touched. Remaining gaps: docs/DESIGN.md.
  */
 public final class UndoLog {
+    private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
     /** No neighbour update (1 off), shape updates skipped (16), drops suppressed (32), onPlace skipped (512),
      *  block-entity side effects skipped (256); clients are told (2). Block.java:92-101. */
     public static final int RESTORE_FLAGS = Block.UPDATE_CLIENTS
@@ -65,23 +86,86 @@ public final class UndoLog {
             throw new IllegalStateException("a recording is already active");
         }
         active = new UndoLog(level);
+        active.snapshotQueues();
         return active;
     }
 
     private record BlockSnapshot(BlockState state, @Nullable CompoundTag blockEntity) {}
 
-    private record EntitySnapshot(CompoundTag tag) {}
+    /**
+     * Full NBT plus the hurt state that NBT does not hold but that decides the next hit: Entity.invulnerableTime
+     * (26.2 Entity.java:260), LivingEntity.lastHurt (LivingEntity.java:250, used at :1210-1220) and, for boats and
+     * minecarts, VehicleEntity damage / hurt time / hurt direction (synced data, VehicleEntity.java:94-107; damage over
+     * 40 breaks it, :50).
+     */
+    private record EntitySnapshot(CompoundTag tag, int invulnerableTime, float lastHurt, float vehicleDamage, int vehicleHurtTime, int vehicleHurtDir) {
+        static EntitySnapshot of(CompoundTag tag, Entity e) {
+            float lastHurt = e instanceof LivingEntity living ? ((LivingEntityAccessor) living).ghostpath$lastHurt() : 0.0F;
+            if (e instanceof VehicleEntity v) {
+                return new EntitySnapshot(tag, e.invulnerableTime, lastHurt, v.getDamage(), v.getHurtTime(), v.getHurtDir());
+            }
+            return new EntitySnapshot(tag, e.invulnerableTime, lastHurt, 0.0F, 0, 0);
+        }
+
+        void applyTransient(Entity e) {
+            e.invulnerableTime = this.invulnerableTime;
+            if (e instanceof LivingEntity living) {
+                ((LivingEntityAccessor) living).ghostpath$setLastHurt(this.lastHurt);
+            }
+            if (e instanceof VehicleEntity v) {
+                v.setDamage(this.vehicleDamage);
+                v.setHurtTime(this.vehicleHurtTime);
+                v.setHurtDir(this.vehicleHurtDir);
+            }
+        }
+    }
+
+    /** One chunk's tick container at begin: the container object (to detect unload/reload) and its queued ticks. */
+    private record TickSnapshot(LevelChunkTicks<?> container, List<ScheduledTick<?>> ticks) {}
 
     private final ServerLevel level;
     private final Map<BlockPos, BlockSnapshot> blocks = new LinkedHashMap<>();
     private final Map<UUID, EntitySnapshot> entities = new LinkedHashMap<>();
     private final List<Entity> spawned = new ArrayList<>();
     private final Set<UUID> spawnedIds = new HashSet<>();
+    private final Map<Long, TickSnapshot> blockTicks = new LinkedHashMap<>();
+    private final Map<Long, TickSnapshot> fluidTicks = new LinkedHashMap<>();
+    private final List<BlockEventData> blockEvents = new ArrayList<>();
+    private final Set<ScheduledTick<?>> createdTicks = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<BlockPos> late = new LinkedHashSet<>();
+    private long startTime;
+    private int ticksNotRestored;
     private boolean busy; // true while we read or write the world ourselves, so our own calls are not logged
     private boolean finished;
 
     private UndoLog(ServerLevel level) {
         this.level = level;
+    }
+
+    /** Pending ticks and queued block events at begin. Called outside the level's tick, so the drain sets are empty. */
+    private void snapshotQueues() {
+        this.startTime = this.level.getGameTime();
+        snapshotTicks(this.level.getBlockTicks(), this.blockTicks);
+        snapshotTicks(this.level.getFluidTicks(), this.fluidTicks);
+        this.blockEvents.addAll(((ServerLevelAccessor) this.level).ghostpath$blockEvents());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T> void snapshotTicks(LevelTicks<T> ticks, Map<Long, TickSnapshot> into) {
+        for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : ((LevelTicksAccessor<T>) ticks).ghostpath$allContainers().long2ObjectEntrySet()) {
+            // empty containers too: a tick the recording creates there must be removed on restore
+            into.put(e.getLongKey(), new TickSnapshot(e.getValue(), new ArrayList<>(e.getValue().getAll().toList())));
+        }
+    }
+
+    /** Block entities first seen at setChanged(), i.e. already changed: their snapshot is not the original. */
+    public Set<BlockPos> lateBlockEntities() {
+        return Collections.unmodifiableSet(this.late);
+    }
+
+    /** Ticks from the begin snapshot that could not be put back (their chunk was unloaded or reloaded meanwhile). */
+    public int ticksNotRestored() {
+        return this.ticksNotRestored;
     }
 
     public int blockCount() {
@@ -119,7 +203,25 @@ public final class UndoLog {
         this.captureBlock(blockEntity.getBlockPos());
     }
 
-    /** Before an existing entity moves, changes velocity or is removed. */
+    /** A tick was accepted into a chunk's queue during the recording (any level; only this level's are removed). */
+    public void onTickScheduled(ScheduledTick<?> tick) {
+        if (!this.busy) {
+            this.createdTicks.add(tick);
+        }
+    }
+
+    /** {@code BlockEntity.setChanged()}: the change is already done. If this is the first touch, the snapshot is late. */
+    public void onBlockEntityChanged(BlockEntity blockEntity) {
+        if (this.busy || blockEntity.getLevel() != this.level || this.blocks.containsKey(blockEntity.getBlockPos())) {
+            return;
+        }
+        BlockPos pos = blockEntity.getBlockPos().immutable();
+        this.late.add(pos);
+        LOGGER.warn("[ghostpath] undo log: block entity at {} changed before it was snapshotted (seen first at setChanged); it will not be restored exactly", pos);
+        this.captureBlock(pos);
+    }
+
+    /** Before an existing entity moves, changes velocity, is hurt or is removed. */
     public void onEntityTouched(Entity entity) {
         if (this.busy || entity instanceof Player || entity.level() != this.level) {
             return;
@@ -136,7 +238,7 @@ public final class UndoLog {
         try {
             TagValueOutput out = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, this.level.registryAccess());
             if (entity.saveAsPassenger(out)) {
-                this.entities.put(id, new EntitySnapshot(out.buildResult()));
+                this.entities.put(id, EntitySnapshot.of(out.buildResult(), entity));
             }
         } finally {
             this.busy = false;
@@ -197,6 +299,13 @@ public final class UndoLog {
             for (Map.Entry<UUID, EntitySnapshot> entry : this.entities.entrySet()) {
                 this.restoreEntity(entry.getKey(), entry.getValue());
             }
+            // 4. pending ticks and queued block events, as at begin
+            long now = this.level.getGameTime();
+            this.restoreTicks(this.level.getBlockTicks(), this.blockTicks, now);
+            this.restoreTicks(this.level.getFluidTicks(), this.fluidTicks, now);
+            ObjectLinkedOpenHashSet<BlockEventData> queue = ((ServerLevelAccessor) this.level).ghostpath$blockEvents();
+            queue.clear();
+            queue.addAll(this.blockEvents);
         } finally {
             this.busy = false;
             this.finished = true;
@@ -212,6 +321,55 @@ public final class UndoLog {
         if (active == this) {
             active = null;
         }
+    }
+
+    /**
+     * For every chunk that had ticks at begin and still has the same container: drop all its ticks (LevelTicks.clearArea,
+     * 26.2 LevelTicks.java:236-252, which also fixes the container scheduling) and re-add the begin ticks with the same
+     * remaining delay, priority and sub-tick order (so their order among themselves and before any later tick holds).
+     * Containers that appeared during the recording are left alone; ticks of a container that went away are counted.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <T> void restoreTicks(LevelTicks<T> ticks, Map<Long, TickSnapshot> snapshot, long now) {
+        Long2ObjectMap<LevelChunkTicks<T>> containers = ((LevelTicksAccessor<T>) ticks).ghostpath$allContainers();
+        for (Map.Entry<Long, TickSnapshot> e : snapshot.entrySet()) {
+            if (containers.get(e.getKey().longValue()) != e.getValue().container()) {
+                this.ticksNotRestored += e.getValue().ticks().size();
+                continue;
+            }
+            ticks.clearArea(this.chunkBox(e.getKey()));
+        }
+        // chunks loaded during the recording: keep their (saved) ticks, drop only the ones the recording created
+        List<Long> newKeys = new ArrayList<>();
+        for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : containers.long2ObjectEntrySet()) {
+            if (!snapshot.containsKey(e.getLongKey()) || snapshot.get(e.getLongKey()).container() != e.getValue()) {
+                newKeys.add(e.getLongKey());
+            }
+        }
+        for (long key : newKeys) {
+            List<ScheduledTick<T>> keep = containers.get(key).getAll().filter(t -> !this.createdTicks.contains(t)).toList();
+            if (keep.size() != containers.get(key).getAll().count()) {
+                ticks.clearArea(this.chunkBox(key));
+                keep.forEach(ticks::schedule);
+            }
+        }
+        for (Map.Entry<Long, TickSnapshot> e : snapshot.entrySet()) {
+            if (containers.get(e.getKey().longValue()) != e.getValue().container()) {
+                continue;
+            }
+            for (ScheduledTick tick : e.getValue().ticks()) {
+                ticks.schedule(new ScheduledTick<>((T) tick.type(), tick.pos(), now + (tick.triggerTick() - this.startTime),
+                    tick.priority(), tick.subTickOrder()));
+            }
+        }
+        if (this.ticksNotRestored > 0) {
+            LOGGER.warn("[ghostpath] undo log: {} pending ticks not restored (their chunk unloaded during the recording)", this.ticksNotRestored);
+        }
+    }
+
+    private BoundingBox chunkBox(long key) {
+        ChunkPos chunk = ChunkPos.unpack(key);
+        return new BoundingBox(chunk.getMinBlockX(), this.level.getMinY(), chunk.getMinBlockZ(), chunk.getMaxBlockX(), this.level.getMaxY(), chunk.getMaxBlockZ());
     }
 
     private void restoreBlockEntity(BlockPos pos, BlockSnapshot snap) {
@@ -241,10 +399,12 @@ public final class UndoLog {
         Entity current = this.level.getEntity(id);
         if (current != null && !current.isRemoved()) {
             current.load(in);
+            snap.applyTransient(current);
             return;
         }
         Entity recreated = EntityType.loadEntityRecursive(in, this.level, EntitySpawnReason.LOAD, EntityProcessor.NOP);
         if (recreated != null) {
+            snap.applyTransient(recreated);
             this.level.addWithUUID(recreated);
         }
     }

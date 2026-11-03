@@ -147,12 +147,51 @@ Code: `record/UndoLog.java`; hooks in `mixin/`. Test: `UndoLogTest.pistonTntRest
 Restore flags: `UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE | UPDATE_SUPPRESS_DROPS | UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS | UPDATE_SKIP_ON_PLACE` (`Block.java:92-101`): no neighbour update, no shape update, no `onPlace`, and no `preRemoveSideEffects` (which would make a chest drop its items; `LevelChunk.java:~305`). Block entities are restored by clearing (`Clearable`) and `loadWithComponents`, because loading only sets slots present in the tag. Entities that still exist are restored with `Entity.load`; removed ones are recreated with `EntityType.loadEntityRecursive` and `ServerLevel.addWithUUID` (same UUID; worked in the test even though the item was discarded in the same tick-window).
 An entity that is not yet registered in the level (`level.getEntity(uuid) != entity`) is never snapshotted, so entities still under construction are not mistaken for existing ones.
 
-**Known gaps (not restored; resolution per "Rulings" R4):**
-1. Pending scheduled ticks (`LevelTicks`) and queued block events (`ServerLevel.blockEvents`): a run consumes and creates them. Matters when a run is cut short by the tick limit. **To close before 1d.**
-2. The level's random and game time (a recording runs real ticks). **Accepted, not restored** (R4).
-3. Non-positional entity changes (health, equipment, effects) of an entity that neither moved, changed velocity nor was removed. **To close:** snapshot on hurt / push / velocity change (R4).
-4. Block entities changed through a reference obtained *before* the recording began. **To close:** snapshot on `setChanged()` (R4).
+**Gaps from 1a, as handled after R4** (details in "Undo-log gaps closed" below):
+1. Pending scheduled ticks and queued block events: **closed**.
+2. The level's random and game time: **accepted, not restored** (R4).
+3. Non-positional entity changes: **closed** for hurt (snapshot before damage, including the hurt state NBT does not hold). Push and velocity changes were already covered by `setDeltaMovement`.
+4. Block entities changed through an old reference: **closed for containers** (snapshot before `setItem`/`removeItem`). For anything else it is **detected, not fixed**: `setChanged()` runs after the change, see the finding below.
 5. Players are never touched; entity passengers/vehicles are saved with their root entity only.
+
+### Undo-log gaps closed (R4)  [implemented]
+Test: `UndoGapsTest.ticksEventsHurtAndContainersRestored`.
+
+**Scheduled ticks.** At `begin` the log keeps, for every loaded chunk (empty ones too), the tick container object and its queued `ScheduledTick`s, for both block and fluid ticks (`LevelTicks.allContainers`, `LevelTicks.java:34`, via an accessor). On `restore`, for every chunk whose container is still the same object:
+- all its ticks are dropped with `LevelTicks.clearArea` on the chunk's box (`:236-252`; this also fixes the container scheduling);
+- the begin ticks are re-added with the **same remaining delay** (`now + triggerTick - beginTime`), priority and `subTickOrder`. Their order among themselves holds, and they come before any tick scheduled later at the same tick and priority.
+
+The world resumes as if it had been paused at `begin`. Game time itself is not restored (R4).
+- Chunks loaded during the recording keep their ticks, except the ones the recording created. Those are tracked by identity from the `LevelChunkTicks.schedule` → `scheduleUnchecked` call (`LevelChunkTicks.java:55,58`) and removed.
+- Begin ticks whose chunk unloaded meanwhile cannot be put back. They are counted (`ticksNotRestored`) and logged.
+- This is level-wide, like the block log: unrelated machinery (a nearby clock) is also put back as it was at begin, ticks included. That is consistent, because its blocks are restored too.
+
+**Block events.** The queue (`ServerLevel.blockEvents`, `:217`, via an accessor) is copied at `begin` and put back on `restore` (cleared, then refilled in order, the same objects).
+
+**Entities: hurt.** `Entity.hurtServer` is abstract (`Entity.java:1931`), so `EntityHurtMixin` targets **every concrete override in 26.2: 54 classes**, generated from the genSources output (grep for the override signature), with a HEAD snapshot. If a class loses its override after a version change, start-up fails (`defaultRequire 1`). A new override would be missed, so the list must be regenerated on each version change. Push ends in `setDeltaMovement` (`Entity.java:1908-1910`), already hooked.
+
+**Finding: hurt state that NBT does not hold** [verified by test]. The first test failed because a minecart's damage was not restored. Not saved, but deciding the next hit:
+- `Entity.invulnerableTime` (`Entity.java:260`);
+- `LivingEntity.lastHurt` (`LivingEntity.java:250`; the two together decide the next hit at `:1210-1220`);
+- `VehicleEntity` damage, hurt time and hurt direction (synced data, `VehicleEntity.java:94-107`; damage over 40 breaks it, `:50`; it decays by 1 per tick, `AbstractMinecart.java:274-275`).
+
+The entity snapshot now holds these next to the NBT and puts them back after `load`. Other transient fields (AI goal timers, cooldowns, path state) are still not covered.
+
+**Block entities: finding, R4 cannot be done as written** [verified 26.2]. R4 says "snapshot on `setChanged()`". But vanilla calls `setChanged()` **after** the change (`BaseContainerBlockEntity.java:105-108` `removeItem`, `:120-123` `setItem`), so a snapshot taken there is already the changed state. What is implemented instead:
+- **Exact for containers:** a HEAD snapshot on `setItem`, `removeItem` and `removeItemNoUpdate` in every block-entity class that declares them (`BaseContainerBlockEntity`; `RandomizableContainerBlockEntity` `:61-73`, which unpacks loot before calling super; `AbstractFurnaceBlockEntity:291`; `ChiseledBookShelfBlockEntity:79,90`; `CrafterBlockEntity:172`; `HopperBlockEntity:74,80`).
+- **Detected, not fixed, for everything else:** if `setChanged()` is the first touch, the (already changed) state is snapshotted anyway, the position goes into `lateBlockEntities()`, and a warning is logged. The test changes a chest stack in place (`getItem(0).grow(10)` + `setChanged()`) and checks that it is reported.
+
+**Verification.** The test passes, and so do all earlier tests. Break-it checks, each made `runGameTest` exit 1 for its own reason, then restored:
+1. Hurt snapshot off: "pig health not restored: 8.0".
+2. Container pre-change snapshot off: "chest changed through an old reference not restored: 9 minecraft:diamond".
+3. Tick restore off: "consumed tick not restored with delay 3: []".
+4. Transient hurt state off: "pig invulnerability (not in NBT) not restored: 10".
+5. Block-event restore off: "block events not as at begin: []".
+6. Empty containers left out of the snapshot **and** created-tick removal off: "tick created by the recording in a chunk without ticks at begin is still pending". Either one alone still passes, because each covers that case. The first version of the code had this bug: it was flaky depending on where chunk borders fell.
+
+**Remaining undo-log gaps:** block entities other than containers changed through an old reference (detected only); entity state outside NBT beyond the hurt fields; ticks created in another dimension; begin ticks whose chunk unloaded; players.
+
+**Test harness finding.** Game tests tick at full speed (no 50 ms sleep), but force-loaded chunks become entity-ticking after asynchronous loading that takes real time. Waits of 0 to 413 ticks were seen, and once more than 800. The machine tests therefore use `maxTicks = 12000` and log the wait.
 
 **Verification done** (because a first-time pass proves little):
 - Mutation checks, each made `runGameTest` exit 1 for its own reason: skipping `restore()` (destroyed stone floor), skipping block-entity restore (chest NBT differs), skipping entity restore (entity set differs), skipping removal of spawned entities (entity set differs).
