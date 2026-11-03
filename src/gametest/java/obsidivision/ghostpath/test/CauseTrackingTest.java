@@ -76,6 +76,7 @@ public class CauseTrackingTest {
     }
 
     private static void buildMachine(GameTestHelper helper) {
+        TestSupport.removeBarriers(helper);
         forceChunks(helper, true);
         for (int x = 0; x <= 14; x++) {
             for (int z = 0; z <= 6; z++) {
@@ -100,7 +101,7 @@ public class CauseTrackingTest {
     /**
      * An observer clock (two observers facing each other, a lamp on each output) runs three blocks from the repeater
      * line the whole time. It writes blocks and schedules ticks every few ticks during the recording, but none of that
-     * may enter the chain: no write, no event at any clock position.
+     * may enter the chain: no read, no write, no event at any clock position.
      */
     @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:cause_clock")
     public void unrelatedClockNeverInFootprint(GameTestHelper helper) {
@@ -137,13 +138,19 @@ public class CauseTrackingTest {
                         "piston block event never ran as chain work");
                     helper.assertTrue(tracker.events().stream().anyMatch(e -> e.kind() == ChainEvent.Kind.ENTITY_STATE && e.detail().contains("minecraft:tnt")),
                         "primed TNT never ticked as chain work");
+                    // read footprint (1c): the piston checks the power of the block above it (quasi-connectivity,
+                    // PistonBaseBlock.getNeighborSignal), a position the chain reads but never writes
+                    BlockPos abovePiston = helper.absolutePos(PISTON.above());
+                    helper.assertTrue(tracker.reads().getOrDefault(abovePiston, java.util.Set.of()).contains(CauseTracker.ReadKind.BLOCK)
+                        && !tracker.writes().contains(abovePiston), "block above the piston not read: " + tracker.reads().get(abovePiston));
                     // the clock really ran during the recording (the undo log saw it write)
                     helper.assertTrue(log.hasBlock(helper.absolutePos(observerA)) && log.hasBlock(helper.absolutePos(observerB)),
                         "the clock did not run during the recording, so this test proves nothing");
                     // ... and never entered the chain
                     for (BlockPos rel : clock) {
                         BlockPos abs = helper.absolutePos(rel);
-                        helper.assertTrue(!tracker.writes().contains(abs), "clock block " + rel.toShortString() + " is in the footprint");
+                        helper.assertTrue(!tracker.footprint().contains(abs), "clock block " + rel.toShortString() + " is in the footprint"
+                            + (tracker.reads().containsKey(abs) ? " (read: " + tracker.reads().get(abs) + ")" : " (written)"));
                         for (ChainEvent e : tracker.events()) {
                             helper.assertTrue(!abs.equals(e.pos()), "clock block " + rel.toShortString() + " has a chain event: " + e);
                         }
@@ -188,7 +195,7 @@ public class CauseTrackingTest {
             }
             helper.assertTrue(a.stream().noneMatch(s -> s.contains("WARNING: not allowed")),
                 "unseeded draw not on the allowlist: " + a.stream().filter(s -> s.contains("WARNING")).findFirst().orElse(""));
-            LOG.info("[ghostpath] seeded runs identical: {} events, {} destroyed blocks", a.size(), destroyed);
+            LOG.info("[ghostpath] seeded runs identical: {} events + footprint entries, {} destroyed blocks", a.size(), destroyed);
             helper.succeed();
         });
         whenEntityTicking(helper, first);
@@ -210,9 +217,13 @@ public class CauseTrackingTest {
         });
     }
 
-    /** Every event must match between two seeded runs. */
+    /** Every event must match between two seeded runs, and so must the footprint (each position with how it was read). */
     private static List<String> comparable(CauseTracker tracker) {
-        return tracker.events().stream().map(ChainEvent::toString).toList();
+        List<String> out = new ArrayList<>(tracker.events().stream().map(ChainEvent::toString).toList());
+        tracker.footprint().stream().sorted()
+            .map(p -> "FOOTPRINT " + p.toShortString() + (tracker.writes().contains(p) ? " written" : "") + " read=" + tracker.reads().getOrDefault(p, java.util.Set.of()))
+            .forEach(out::add);
+        return out;
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -270,7 +281,7 @@ public class CauseTrackingTest {
     }
 
     private static void report(String name, CauseTracker tracker) {
-        LOG.info("[ghostpath] {}: {} chain events, {} written positions", name, tracker.events().size(), tracker.writes().size());
+        LOG.info("[ghostpath] {}: {} chain events, {} written positions, {} read positions", name, tracker.events().size(), tracker.writes().size(), tracker.reads().size());
         LOG.info("[ghostpath] {} events:\n{}", name, tracker.eventsAsText(400));
         for (Map.Entry<String, Integer> site : tracker.unseededDrawSites().entrySet()) {
             LOG.info("[ghostpath] {}: unseeded draw x{} at {}", name, site.getValue(), site.getKey());

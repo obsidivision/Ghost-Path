@@ -272,6 +272,42 @@ Rerun the three break-it checks above whenever cause tracking changes.
 
 ---
 
+## Build step 1c: read footprint (implemented)
+Code: `CauseTracker.onRead` / `reads()` / `footprint()`, `CauseTracker.onNoCollisionChunk`; hooks `mixin/LevelReadMixin.java`, `mixin/BlockCollisionsMixin.java`. Tests: `FootprintTest.collisionReadsInFootprint`, `FootprintTest.noCollisionBelowFullRecorded`, and the 1b tests, which now check the whole footprint.
+
+**Footprint = every block position that chain work read or wrote**, with how it was read:
+| Read kind | Hook (26.2) |
+|---|---|
+| `BLOCK` | `Level.getBlockState` HEAD (`Level.java:368`) |
+| `FLUID` | `Level.getFluidState` HEAD (`:378`; reads the chunk itself, `:383-384`, not `getBlockState`) |
+| `BLOCK_ENTITY` | `Level.getBlockEntity(BlockPos)` HEAD (`:700`) |
+| `COLLISION` | `BlockCollisions.computeNext`, the `chunk.getBlockState(this.pos)` call (`BlockCollisions.java:89`) |
+
+`ServerLevel` overrides none of the three `Level` methods. Reads are kept in the footprint only, not in the event log: one explosion reads about 800 positions.
+
+**"No collision: chunk below FULL"** (decided in finding 3): `BlockCollisions.getChunk` (`:64-77`) returns null when `Level.getChunkForCollisions` (`Level.java:770-771`, `getChunk(x, z, FULL, false)`) finds the chunk below FULL. `computeNext` then skips every block there (`:87`). During chain work this logs a `NO_COLLISION_BELOW_FULL` event with the chunk x,z, once per chunk and tick.
+
+**Findings**
+- **Finding 3 confirmed by a running test:** a glass wall that a chain TNT flies into is in the footprint only as `COLLISION`. With the `BlockCollisions` read hook off, the wall is not read at all.
+- **A chain read of an unloaded position loads the chunk.** `Level.getBlockState` goes through `getChunk(x, z)` = `getChunk(x, z, FULL)` with load=true (`Level.java:204-205, 373`). This is vanilla behaviour of the machine (a real firing does the same), not something the recording adds. The mod's own hooks only read positions that are being written or handed out, which are loaded (R9).
+- **Chunk status moves while you look.** Around a test, chunks keep loading asynchronously. The first chunk below FULL found at launch was FULL one tick later, so the test accepts the event for that chunk or any further out. For step 2/5 this means a chunk's status has to be read at the tick it matters, not once up front.
+- **Footprint repeatability:** within one placement, the two seeded runs give the same events **and** the same footprint (about 1100 entries compared). Between JVM runs (different test placement in the world) the read count differs (835 / 900 / 978 for the clock test). Not investigated. Likely candidates are double precision at |x| of about 10^7, or chunk alignment. Either way, it supports copying the ghost **at the same coordinates**.
+- **Test harness: barrier shell.** The 26.2 framework encases each test structure in barrier blocks, one block outside its bounds, ceiling included (`GameTestInfo.java:75` `encaseStructure`; `TestInstanceBlockEntity.java:358-363, 374-391`). They are removed only after a pass. The 1b machine (15 blocks long, structure 8x8x8) had a barrier wall through it at x = 8, which partly shielded the explosion; the earlier 1b results were obtained like that. `TestSupport.removeBarriers` now clears the shell before building. The 1b results (identical seeded runs, clock out of the footprint) still hold without it.
+
+**Verification.** All 9 game tests pass three runs in a row; `./gradlew build` passes. Break-it checks, each made `runGameTest` exit 1 for its own reason, then restored:
+1. `BlockCollisions` read hook off: "wall not in the footprint as a collision read: null".
+2. Below-FULL hook off: "no 'no collision: chunk below FULL' event for chunk x >= ...".
+3. `Level.getBlockState` hook off: "block above the piston not read: null". The piston reads the block above it for quasi-connectivity, `PistonBaseBlock.java:138-140`.
+- Clock test: the clock is now checked against the whole footprint (reads too). The chain reads 835-978 positions and none of them is a clock block.
+
+**Known gaps (1c)**
+1. Not in the footprint: light reads, heightmap reads and entity lookups (`getEntities` over a box). A real change there does not trigger a rerun.
+2. Collisions against getters other than a `Level` (for example a mob's `PathNavigationRegion`) are not recorded.
+3. Other read paths that bypass the three `Level` methods and `BlockCollisions` (code reading a `LevelChunk` directly) have not been audited exhaustively.
+4. `NO_COLLISION_BELOW_FULL` covers block collision only. An entity in a chunk that is not entity-ticking simply does not tick; that is for the chunk-status display (step 5).
+
+---
+
 ## Rulings (user decisions)
 
 **R1. Explosion randomness: seed it.**

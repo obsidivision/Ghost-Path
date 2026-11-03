@@ -35,7 +35,9 @@ public record ChainEvent(long tick, Kind kind, @Nullable BlockPos pos, String de
         BLOCK_ENTITY_TAGGED,
         /** chain work drew from an unseeded random (the level's, or an entity's own); detail: call site, and
          *  "allowed: reason" if the site is on {@link UnseededDrawAllowlist}, else "WARNING: not allowed" (R1) */
-        UNSEEDED_DRAW
+        UNSEEDED_DRAW,
+        /** entity collision by chain work met a chunk below FULL status: no collision there at all (detail: chunk x,z) */
+        NO_COLLISION_BELOW_FULL
     }
 
     @Override

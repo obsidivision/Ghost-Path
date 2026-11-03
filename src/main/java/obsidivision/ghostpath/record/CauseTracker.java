@@ -2,6 +2,9 @@ package obsidivision.ghostpath.record;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -94,6 +97,8 @@ public final class CauseTracker {
 
     private final List<ChainEvent> events = new ArrayList<>();
     private final Set<BlockPos> writes = new LinkedHashSet<>();
+    private final Map<BlockPos, EnumSet<ReadKind>> reads = new HashMap<>();
+    private final Set<String> noCollisionSeen = new HashSet<>();
     private final Map<String, Integer> unseededSites = new LinkedHashMap<>();
     // identity, not equality: a queued tick or block event that is removed without running must never let a later,
     // equal-looking one count as chain work (ScheduledTick/BlockEventData are records with value equality)
@@ -135,6 +140,30 @@ public final class CauseTracker {
         return Collections.unmodifiableSet(this.writes);
     }
 
+    /** How chain work read a block position (step 1c). */
+    public enum ReadKind {
+        /** {@code Level.getBlockState} */
+        BLOCK,
+        /** {@code Level.getFluidState} */
+        FLUID,
+        /** {@code Level.getBlockEntity} */
+        BLOCK_ENTITY,
+        /** entity block collision, read from the chunk by {@code BlockCollisions} (bypasses Level.getBlockState) */
+        COLLISION
+    }
+
+    /** Block positions read by chain work, with how they were read. */
+    public Map<BlockPos, Set<ReadKind>> reads() {
+        return Collections.unmodifiableMap(this.reads);
+    }
+
+    /** The footprint: every block position chain work read or wrote. */
+    public Set<BlockPos> footprint() {
+        Set<BlockPos> all = new LinkedHashSet<>(this.writes);
+        all.addAll(this.reads.keySet());
+        return all;
+    }
+
     /** Call site -> number of unseeded chain draws there. */
     public Map<String, Integer> unseededDrawSites() {
         return Collections.unmodifiableMap(this.unseededSites);
@@ -162,6 +191,36 @@ public final class CauseTracker {
 
     private void log(ChainEvent.Kind kind, @Nullable BlockPos pos, String detail) {
         this.events.add(new ChainEvent(this.level.getGameTime() - this.startTime, kind, pos == null ? null : pos.immutable(), detail));
+    }
+
+    // ---- hooks: reads (1c) ----
+
+    /** Chain work read {@code pos} in {@code level}. Not an event (an explosion reads thousands); footprint only. */
+    public void onRead(Level level, BlockPos pos, ReadKind kind) {
+        if (!this.inChain(level)) {
+            return;
+        }
+        EnumSet<ReadKind> kinds = this.reads.get(pos);
+        if (kinds == null) {
+            kinds = EnumSet.noneOf(ReadKind.class);
+            this.reads.put(pos.immutable(), kinds);
+        }
+        kinds.add(kind);
+    }
+
+    /**
+     * Entity collision during chain work found chunk (x, z) not at FULL status ({@code Level.getChunkForCollisions}
+     * returned null): every block in it counts as no collision, which changes the path (DESIGN finding 3). Logged once
+     * per chunk and tick.
+     */
+    public void onNoCollisionChunk(Level level, int chunkX, int chunkZ) {
+        if (!this.inChain(level)) {
+            return;
+        }
+        long tick = this.level.getGameTime() - this.startTime;
+        if (this.noCollisionSeen.add(chunkX + "," + chunkZ + "@" + tick)) {
+            this.log(ChainEvent.Kind.NO_COLLISION_BELOW_FULL, null, "chunk " + chunkX + "," + chunkZ);
+        }
     }
 
     // ---- hooks: blocks ----

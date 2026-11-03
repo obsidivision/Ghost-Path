@@ -9,7 +9,8 @@
       "obsidivision.ghostpath.test.SmokeTest",
       "obsidivision.ghostpath.test.UndoLogTest",
       "obsidivision.ghostpath.test.CauseTrackingTest",
-      "obsidivision.ghostpath.test.UndoGapsTest"
+      "obsidivision.ghostpath.test.UndoGapsTest",
+      "obsidivision.ghostpath.test.FootprintTest"
     ]
   },
   "depends": {

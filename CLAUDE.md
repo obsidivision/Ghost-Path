@@ -23,6 +23,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 
 ## Sandbox quirks (this cloud environment)
 - `repo.maven.apache.org` returns HTTP 429 from the shared IP. `~/.gradle/init.d/central-mirror.gradle` (written by `scripts/setup-container.sh`, user level, not in the repo) rewrites it to `repo1.maven.org`; `settings.gradle` also lists repo1. If a build still hits a 429, just rerun: Gradle caches what it got.
+- Game tests: the framework puts a barrier shell around each test structure (use `TestSupport.removeBarriers` for machines larger than 8x8x8); tests tick at full speed while chunk loading takes real time, so tests that wait for chunks need a large `maxTicks`.
 - A game-test mod only exists if `fabricApi.configureTests { createSourceSet = true }` is set (already is). Never trust "N tests passed" without checking that our test's name appears in the log.
 
 ## Environment
@@ -39,7 +40,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 | 1a Undo log | **done**: `UndoLog` + 4 mixins, game test passes, mutation-checked (see DESIGN "Build step 1a"); known gaps listed there |
 | 1b Cause tracking | **done**: `CauseTracker` (chain context through ticks, block events, entities, block entities; ticks/events by identity, R7), event log, write footprint, seeded chain random for TNT, explosions, item drops and chain-built entities' own randoms (R1, R6), `UNSEEDED_DRAW` with allowlist; 3 game tests pass, 6 break-it checks (see DESIGN "Build step 1b") |
 | Undo-log gaps (R4) | **done**: ticks and block events restored as at begin (remaining delays kept), hurt snapshot on all 54 `hurtServer` overrides plus non-NBT hurt state, container pre-change snapshot; `setChanged()` only detects (it runs after the change, see DESIGN); `UndoGapsTest` + 6 break-it checks |
-| 1c Read/write footprint | not started (hook `BlockCollisions`, record "no collision: chunk below FULL") |
+| 1c Read/write footprint | **done**: reads via `Level.getBlockState/getFluidState/getBlockEntity` and `BlockCollisions` (collision reads), footprint = reads + writes, `NO_COLLISION_BELOW_FULL` event; `FootprintTest` (2 tests), seed test compares footprints, 3 break-it checks (see DESIGN "Build step 1c") |
 | 1d `/path machine` | not started |
 | 2 Ghost copy | not started. Decided: own `ServerLevel` subclass, no Fantasy (DESIGN finding 2 lists what to override) |
 | 3 Check ghost against real | not started |
