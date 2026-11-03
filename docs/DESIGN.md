@@ -111,13 +111,13 @@ Paths are relative to the decompiled `net/minecraft/`. Line numbers are from the
 - Separate helper, not used by that loop: `ServerLevel.isPositionEntityTicking(pos)` = `entityManager.canPositionTick(pos) && inEntityTickingRange(...)` (`:1800-1802`). The per-tick loop uses only `inEntityTickingRange`; `entityManager` status (lazy/loaded) is applied when entities are moved in or out of `entityTickList`, which is not yet traced (step 2/5).
 - Also note the loop does not depend on `runs` (the tick-rate "runs normally" flag): freezing is per entity via `tickRateManager.isEntityFrozen` (`:430`).
 
-### 6. TNT randomness  [verified 26.2; handling **decided**]
+### 6. TNT randomness  [verified 26.2; handling **decided**, explosions ruled: seed them]
 - The kick is in the **constructor** `PrimedTnt(Level, x, y, z, owner)`: `double rot = level.getRandom().nextDouble() * (float)(Math.PI * 2); setDeltaMovement(-sin(rot)*0.02, 0.2F, -cos(rot)*0.02)` (`PrimedTnt.java:65-69`).
 - Chain-reaction TNT also draws a random fuse: `TntBlock` (`TntBlock.java:77-78`) -> `PrimedTnt.getRandomShortFuse` (`PrimedTnt.java:180-181`, `random.nextInt(...)`).
 - PrimedTnt is constructed in three places: `TntBlock.java:77` (explosion chain, with random fuse), `TntBlock.java:89` (ignited, no random fuse), `DispenseItemBehavior.java:212` (dispenser, kick only).
 - **Decision: a mod-owned random with a fixed seed.** During a recording and during every ghost run, TNT priming (the kick draw at `PrimedTnt.java:68` and the fuse draw at `TntBlock.java:78`) draws from this mod random instead of `level.getRandom()`. It is reset to the same seed at the start of each run. Same seed in both runs means the ghost-vs-real check can match exactly. "kick off" means: draw from that random, discard the kick value, apply 0 (so the draw count and order stay identical to "kick on").
 - Outside a run the vanilla random is used untouched. Side effect to accept: while recording, the real level's own random is not advanced by TNT priming, so the world's random sequence afterwards differs from a world where the machine was fired for real.
-- **New finding, not covered by the decision above (needs a ruling):** TNT explosions also use the level's random directly: `ServerExplosion.java:135` (ray power `0.7F + random.nextFloat()*0.6F`), `:215` (`Util.shuffle(targetBlocks, level.random)`), `:228` (fire placement). They read the `protected final RandomSource random` **field** of `Level` (`Level.java:124`, `RandomSource.create()`, unseeded), not `getRandom()`. The real overworld and the ghost have different `random` instances, so unless these three draws are also taken from the seeded mod random, explosion block-destruction can differ between ghost and real and the exact check cannot hold for machines that blow up blocks. Machines that only launch TNT and do not rely on explosions breaking blocks are unaffected.
+- **Finding (now ruled, see "Rulings" R1):** TNT explosions also use the level's random directly: `ServerExplosion.java:135` (ray power `0.7F + random.nextFloat()*0.6F`), `:215` (`Util.shuffle(targetBlocks, level.random)`), `:228` (fire placement). They read the `protected final RandomSource random` **field** of `Level` (`Level.java:124`, `RandomSource.create()`, unseeded), not `getRandom()`. The real overworld and the ghost have different `random` instances, so unless these three draws are also taken from the seeded mod random, explosion block-destruction can differ between ghost and real and the exact check cannot hold for machines that blow up blocks. Machines that only launch TNT and do not rely on explosions breaking blocks are unaffected.
 
 ### 7. Mappings, Java, Loom  [verified]
 - **No mappings.** Yarn returns no builds for 26.2 and Mojang publishes no `client_mappings` for it; Loom is used with `minecraft "com.mojang:minecraft:26.2"` and plain `implementation` dependencies (no `modImplementation`, no `mappings` line).
@@ -147,14 +147,39 @@ Code: `record/UndoLog.java`; hooks in `mixin/`. Test: `UndoLogTest.pistonTntRest
 Restore flags: `UPDATE_CLIENTS | UPDATE_KNOWN_SHAPE | UPDATE_SUPPRESS_DROPS | UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS | UPDATE_SKIP_ON_PLACE` (`Block.java:92-101`): no neighbour update, no shape update, no `onPlace`, and no `preRemoveSideEffects` (which would make a chest drop its items; `LevelChunk.java:~305`). Block entities are restored by clearing (`Clearable`) and `loadWithComponents`, because loading only sets slots present in the tag. Entities that still exist are restored with `Entity.load`; removed ones are recreated with `EntityType.loadEntityRecursive` and `ServerLevel.addWithUUID` (same UUID; worked in the test even though the item was discarded in the same tick-window).
 An entity that is not yet registered in the level (`level.getEntity(uuid) != entity`) is never snapshotted, so entities still under construction are not mistaken for existing ones.
 
-**Known gaps (not restored):**
-1. Pending scheduled ticks (`LevelTicks`) and queued block events (`ServerLevel.blockEvents`): a run consumes and creates them. Matters when a run is cut short by the tick limit.
-2. The level's random and game time (a recording runs real ticks).
-3. Non-positional entity changes (health, equipment, effects) of an entity that neither moved, changed velocity nor was removed.
-4. Block entities changed through a reference obtained *before* the recording began.
+**Known gaps (not restored; resolution per "Rulings" R4):**
+1. Pending scheduled ticks (`LevelTicks`) and queued block events (`ServerLevel.blockEvents`): a run consumes and creates them. Matters when a run is cut short by the tick limit. **To close before 1d.**
+2. The level's random and game time (a recording runs real ticks). **Accepted, not restored** (R4).
+3. Non-positional entity changes (health, equipment, effects) of an entity that neither moved, changed velocity nor was removed. **To close:** snapshot on hurt / push / velocity change (R4).
+4. Block entities changed through a reference obtained *before* the recording began. **To close:** snapshot on `setChanged()` (R4).
 5. Players are never touched; entity passengers/vehicles are saved with their root entity only.
 
 **Verification done** (because a first-time pass proves little):
 - Mutation checks, each made `runGameTest` exit 1 for its own reason: skipping `restore()` (destroyed stone floor), skipping block-entity restore (chest NBT differs), skipping entity restore (entity set differs), skipping removal of spawned entities (entity set differs).
 - A wrong mixin method name (`tickBogus` on the inner-class mixin) fails start-up with `InvalidInjectionException` (`defaultRequire: 1`), so no mixin can silently do nothing.
 - Three consecutive runs pass (the explosion uses unseeded randomness, so the outcome differs per run).
+
+### Negative tests (kept as notes)
+The mutation checks and the wrong-method-name check above are the negative tests for 1a. Rerun them whenever the undo log changes: break the thing on purpose, confirm `runGameTest` fails for that reason, restore it. A pass alone proves little.
+
+---
+
+## Rulings (user decisions)
+
+**R1. Explosion randomness: seed it.**
+- During a recording and during every ghost run, all random draws made by chain work come from ONE mod-owned `RandomSource`, reset to the same seed at the start of each run. Covers TNT priming (kick + fuse) and the three `ServerExplosion` sites (`:135` ray strength, `:215` shuffle, `:228` fire). One stream is enough: the chain draws in the same order in both runs if the copy is right, and a mismatch then shows up as a real difference, which step 3 should catch.
+- Draws by things outside the chain (mobs, random ticks, players) keep using `Level.random`.
+- If cause tracking (1b) finds chain work reading `Level.random` at a site not redirected, log an "unseeded draw" event with file:line. Never silently allow it.
+- The footprint records destroyed blocks as writes, like any other change.
+
+**R2. Ghost entity ticking.** In the ghost `ServerLevel` subclass, reset `emptyTime` before each on-demand tick, and give the copied area a ticket matching the real chunk's level (not forced everywhere), so `inEntityTickingRange` matches the real run.
+
+**R3. `copyAreaFrom`.** OK to use, but only into an empty target with the target chunks loaded first. After copying, assert the tick count equals the source count and fail loudly if any were dropped.
+
+**R4. Undo log gaps.**
+- Close the scheduled-tick and block-event gaps before 1d.
+- Game time: not restored (real time passes). Level random: not restored (chain draws are seeded).
+- Entities: first-touch snapshot (full NBT) also when the chain hurts, pushes or changes the velocity of an entity, not only on move/removal.
+- Block entities: first-touch snapshot also on `setChanged()`, to catch changes through an old reference.
+
+**R5. 1a accepted.** The deliberate-break checks were the right check; kept as notes above.
