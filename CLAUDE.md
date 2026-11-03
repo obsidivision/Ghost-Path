@@ -1,10 +1,12 @@
 # Ghost Path: working notes for Claude
 
+> **In a new container, run `scripts/setup-container.sh` first** (installs JDK 25, points Gradle at it, installs the Maven Central mirror init script; safe to run twice). Then `./gradlew build`.
+
 Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will go. Design and verified findings: `docs/DESIGN.md`. Read it first.
 
 ## Ground rules
 - **Target:** Minecraft Java **26.2**, Fabric. Don't assume anything from 1.21.x still holds. 26.x is unobfuscated: no Yarn, use Mojang names exactly as `genSources` shows them.
-- **Java 25.** `apt` has `openjdk-25-jdk-headless`. Gradle's daemon is pointed at it in the user file `~/.gradle/gradle.properties` (`org.gradle.java.home=/usr/lib/jvm/java-25-openjdk-amd64`), not in the repo.
+- **Java 25.** `scripts/setup-container.sh` installs `openjdk-25-jdk-headless` and points Gradle's daemon at it in the user file `~/.gradle/gradle.properties` (`org.gradle.java.home=...`), not in the repo.
 - **Never assume vanilla code exists or behaves a certain way.** Find the real method in the 26.2 sources with grep before writing a mixin or relying on a vanilla method. Quote class, method and line in a comment above each mixin. If the design doesn't match the source, stop and tell the user instead of working around it.
 - **Source of truth:** only the decompiled source from `./gradlew genSources` on the official 26.2 jar. No third-party repos of Minecraft code. Keep generated sources outside git (they live in `.gradle/loom-cache`, which is ignored; unzip copies go in the scratchpad).
 - **Check against the source three ways:** (1) read it; (2) let the build check it: a mixin whose target doesn't exist must fail the build or start-up, never use `require = 0`; (3) run the real game: behavior is confirmed with game tests on a headless 26.2 server, and when the source and a test disagree, the test wins and the finding goes in `docs/DESIGN.md`.
@@ -20,7 +22,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 - Run client: `./gradlew runClient`
 
 ## Sandbox quirks (this cloud environment)
-- `repo.maven.apache.org` returns HTTP 429 from the shared IP. `~/.gradle/init.d/central-mirror.gradle` (user level, not in the repo) rewrites it to `repo1.maven.org`; `settings.gradle` also lists repo1. If a build still hits a 429, just rerun: Gradle caches what it got.
+- `repo.maven.apache.org` returns HTTP 429 from the shared IP. `~/.gradle/init.d/central-mirror.gradle` (written by `scripts/setup-container.sh`, user level, not in the repo) rewrites it to `repo1.maven.org`; `settings.gradle` also lists repo1. If a build still hits a 429, just rerun: Gradle caches what it got.
 - A game-test mod only exists if `fabricApi.configureTests { createSourceSet = true }` is set (already is). Never trust "N tests passed" without checking that our test's name appears in the log.
 
 ## Environment
