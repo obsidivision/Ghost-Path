@@ -5,24 +5,38 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 
 /**
- * Stands in for {@code Level.random} (26.2 Level.java:124, {@code RandomSource.create()}, unseeded). Every call is passed
- * straight to the original random, so behaviour and draw order are unchanged; when chain work is running in this level
- * the draw is also reported to the {@link CauseTracker} as an unseeded draw (DESIGN ruling R1). Catches both
- * {@code level.random} field reads and {@code level.getRandom()} (Level.java:1050 returns the field).
+ * Stands in for {@code Level.random} (26.2 Level.java:124) and for each entity's own {@code Entity.random}
+ * (Entity.java:254); both are {@code RandomSource.create()}, unseeded. Every call is passed straight to the wrapped
+ * random, so behaviour and draw order are unchanged. When chain work is running in this level, a draw from an
+ * <b>unseeded</b> wrapper is reported to the {@link CauseTracker} (DESIGN ruling R1). A <b>seeded</b> wrapper (the
+ * own random of an entity built by chain work, seeded from the chain stream) reports nothing. Catches both field reads
+ * and {@code level.getRandom()} (Level.java:1050 returns the field).
  */
 public final class WatchedRandom implements RandomSource {
     private final RandomSource delegate;
     private final Level level;
+    private final String source;
+    private final boolean seeded;
 
-    public WatchedRandom(RandomSource delegate, Level level) {
+    /** @param source "Level.random" or "Entity.random", for the event log */
+    public WatchedRandom(RandomSource delegate, Level level, String source, boolean seeded) {
         this.delegate = delegate;
         this.level = level;
+        this.source = source;
+        this.seeded = seeded;
+    }
+
+    public boolean seeded() {
+        return this.seeded;
     }
 
     private void draw(String method) {
+        if (this.seeded) {
+            return;
+        }
         CauseTracker t = CauseTracker.active();
         if (t != null && t.inChain(this.level)) {
-            t.onUnseededDraw(method);
+            t.onUnseededDraw(this.source, method);
         }
     }
 

@@ -16,6 +16,6 @@ public abstract class LevelMixin {
      */
     @ModifyExpressionValue(method = "<init>", at = @At(value = "INVOKE", target = "Lnet/minecraft/util/RandomSource;create()Lnet/minecraft/util/RandomSource;"))
     private RandomSource ghostpath$watchRandom(RandomSource original) {
-        return new WatchedRandom(original, (Level) (Object) this);
+        return new WatchedRandom(original, (Level) (Object) this, "Level.random", false);
     }
 }

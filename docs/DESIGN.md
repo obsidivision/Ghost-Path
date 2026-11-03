@@ -170,26 +170,40 @@ Code: `record/CauseTracker.java`, `record/ChainEvent.java`, `record/WatchedRando
 **Rule.** Work is chain work while chain context is on. The trigger runs with it on (`runAsChain`). Synchronous work below a chain call inherits it (neighbour and shape updates finish before the call returns). Deferred work gets it at its entry point if chain work created or touched the deferred thing:
 | Deferred thing | Joins the chain when | Hook (26.2) | Runs as chain at |
 |---|---|---|---|
-| scheduled block/fluid tick | queued in chain context; if an equal (type, pos) tick is already pending (`LevelChunkTicks.java:54` drops ours), the pending one joins ("merged") | `LevelChunkTicks.schedule` HEAD (`:53`) | `LevelTicks.runCollectedTicks`, the `output.accept` call (`:190`), matched by identity of the `ScheduledTick`, else by merged (type, pos) |
-| block event (pistons) | queued in chain context (the queue is a set, `ServerLevel.java:217`; an equal queued event joins) | `ServerLevel.blockEvent` HEAD (`:1247`) | `ServerLevel.doBlockEvent` (`:1278`), wrapped |
+| scheduled block/fluid tick | queued in chain context; if an equal (type, pos) tick is already pending (`LevelChunkTicks.java:54` drops ours), that pending tick **object** (found in `tickQueue`, `:19`) joins ("merged") | `LevelChunkTicks.schedule` HEAD (`:53`) | `LevelTicks.runCollectedTicks`, the `output.accept` call (`:190`), matched by **identity** of the `ScheduledTick` |
+| block event (pistons) | queued in chain context; the queue is a set (`ServerLevel.java:217`), so if an equal event is queued already, that queued **object** joins | the `blockEvents.add` call in `ServerLevel.blockEvent` (`:1248`) | `ServerLevel.doBlockEvent` (`:1278`), wrapped; matched by **identity** |
 | entity | spawned (`addEntity` RETURN, `:992`), moved (`Entity.setPosRaw`, `:3794`), velocity changed or pushed (`setDeltaMovement`, `:3722`; `push` ends there, `:1908-1910`), or hurt (`LivingEntity.hurtServer`, `:1169`) in chain context; players never | | `ServerLevel.tickNonPassenger` (`:822`) / `tickPassenger` (`:836`), wrapped |
 | block entity | put into a chunk (`LevelChunk.setBlockEntity`, `:422`) or `setChanged()` (`BlockEntity.java:194`) in chain context | | `LevelChunk$BoundTickingBlockEntity.tick` (`:739`), wrapped |
 
 Everything else (players, mobs, random ticks, unrelated redstone) runs with context off: not in the event log, not in the footprint.
 
+**Identity, not equality (R7).** `ScheduledTick` and `BlockEventData` are records with value equality, so chain ticks and events are held in identity sets. When one is removed without running, it leaves the chain set and a `TICK_CANCELLED` / `BLOCK_EVENT_CANCELLED` event is logged. A later, equal-looking tick or event on the same spot is a new object and is not chain work. Removal paths in 26.2:
+- `LevelTicks.clearArea` (`:236-252`; its predicate is wrapped, which covers the containers and `toRunThisTick`/`alreadyRunThisTick`) and `ServerLevel.clearBlockEvents` (`:1665-1667`). Both are called only by the game-test framework (`StructureUtils.java:73-74`, `GameTestInfo.java:77-78`).
+- Chunk unload, `LevelTicks.removeContainer` (`:61-68`). The ticks are saved and come back as new objects on reload (`LevelChunkTicks.unpack`, `:109-114`), so a chain tick cannot be followed across an unload. It is logged as cancelled ("saved with unloading chunk: not followed").
+- A merge into a tick that exists only as an un-unpacked saved tick (`pendingTicks`, `:20`) has no object to follow. It is logged as "merged into a saved tick: not followed".
+
 **Event log** (`ChainEvent`, ticks relative to the start, no UUIDs): `WRITE` (block state change, or block entity `setChanged`), `TICK_SCHEDULED`/`TICK_RUN`, `BLOCK_EVENT_QUEUED`/`BLOCK_EVENT_RUN`, `ENTITY_TAGGED`, `ENTITY_STATE` (exact position and velocity of each chain entity after each of its ticks), `BLOCK_ENTITY_TAGGED`, `UNSEEDED_DRAW`. This is the log step 3 compares.
 **Footprint so far:** positions of chain `WRITE`s (destroyed blocks included, R1). Reads are step 1c.
 
-**Randomness (R1), implemented.** One `RandomSource.create(seed)` per tracker, created at `begin`. During chain work in the tracked level these sites draw from it: `PrimedTnt.java:68` (kick), `TntBlock.java:78` (short fuse), `ServerExplosion.java:135,215,228`. `Level.random` (`Level.java:124`) is wrapped in `WatchedRandom` at construction. It passes every call through unchanged (`LegacyRandomSource` overrides none of `RandomSource`'s default methods, so the draw semantics are identical) and reports any draw made during chain work as `UNSEEDED_DRAW` with its call site. That catches both `level.random` and `level.getRandom()`.
+**Randomness (R1, R6), implemented.** One `RandomSource.create(seed)` per tracker, created at `begin`. During chain work in the tracked level these sites draw from it:
+- TNT: `PrimedTnt.java:68` (kick), `TntBlock.java:78` (short fuse).
+- Explosions: `ServerExplosion.java:135,215,228`.
+- Item drops (R6): `Block.popResource` (`Block.java:408`, jitter `:409-411`), `Block.popResourceFromFace` (`:421`, position and velocity `:422-427`), `Containers.dropItemStack` (`Containers.java:36`, a destroyed container spilling: position, stack split, velocity), `DefaultDispenseItemBehavior.spawnItem` (`:41`, dropper/dispenser launch speed and spread).
+- **Entity's own random (R6).** Every entity has its own unseeded `Entity.random` (`Entity.java:254`). It makes the UUID (`:287`, `Mth.createInsecureUUID`) and, for items, the spawn velocity, yaw and bob offset (`ItemEntity.java:54,58,65`). The 1b detector was blind to it. Now an entity built by chain work gets its random seeded from one chain-stream draw, so its UUID and all its own draws repeat exactly. Any other entity's random is wrapped, and its draws during chain work are reported.
+
+Note: chain-built entities get deterministic UUIDs, the same in every run with the same seed. This is fine while each recording is undone before the next (the undo log discards spawned entities); a ghost level is a separate entity manager.
+Other item spawn paths (`JukeboxBlockEntity.java:54`, mob drops, `ShulkerBoxBlock`, lecterns) are not redirected. If chain work hits them they show up as warnings.
+
+`Level.random` (`Level.java:124`) and every `Entity.random` are wrapped in `WatchedRandom` at construction. It passes every call through unchanged (`LegacyRandomSource` overrides none of `RandomSource`'s default methods, so the draw semantics are identical). Any draw from an unseeded wrapper during chain work is reported as `UNSEEDED_DRAW` with its call site. That catches both `level.random` and `level.getRandom()`.
+
+**Allowlist (R6).** `record/UnseededDrawAllowlist.java` maps "File.java:line" (first caller outside `RandomSource`/`Mth`/`Util`) to a reason. A listed draw is still logged, marked "allowed: reason". Anything else is logged with "WARNING: not allowed" and a server-log warning once per site. Current list: `PistonBaseBlock.java:172` (piston extend sound pitch). An entry that stops matching after a version change turns back into a warning, which is the safe direction.
 Not done yet: "kick off" (draw, discard, apply 0); that comes with `/path kick` in 1d.
 
-**Unseeded draws found by the test machine** (all logged, none silently allowed):
-- `PistonBaseBlock.java:172`: piston extend sound pitch. Changes nothing in the world.
-- `Block.java:409-411` via `Mth.nextDouble` (`Mth.java:155`): `Block.popResource` jitters the spawn position of dropped items. So **items dropped by a chain explosion are not exact between runs**; the seed test leaves item entities out for this reason. Open: seed this site too, or keep items marked inexact.
-- Not seen: loot-table draws for explosion drops, item spawn velocity (26.2 `ItemEntity(Level, x, y, z, ItemStack)`, `ItemEntity.java:61`, does not draw from the level random).
+**Unseeded draws found by the test machine:** only `PistonBaseBlock.java:172` (allowed). The `Block.popResource` jitter found in the first 1b version is now seeded (R6). The loot-table rolls for explosion drops never showed up as draws from these randoms (not traced further).
 
 **Findings while testing**
 - At `LevelChunk.setBlockEntity` HEAD the block entity's own level is still null (the method sets it), so the hook uses the chunk's level. The first version missed the moving piston because of this.
+- **Tests only (R9):** the game tests force-load chunks (`setChunkForced`) so the machine is entity-ticking. **The real recording (`/path machine`) must never force-load chunks or change ticket levels.** The ghost copies the real chunk ticket levels (R2), and a recording that added tickets would change what it copies and how the real run behaves.
 - The default Fabric test structure is 8x8x8 (`fabric-gametest-api-v1:gametest/structure/empty.snbt`). A longer machine can reach a chunk that is not entity-ticking: the primed TNT then never ticked (seen once; depends on where the test lands). The tests force-load the area and wait for `isPositionEntityTicking` before recording. Once, the TNT froze for 21 ticks while the forced ticket was still being applied. This is finding 5 in practice: chunk state changes the path.
 
 **Verification done**
@@ -198,15 +212,21 @@ Not done yet: "kick off" (draw, discard, apply 0); that comes with `/path kick` 
   1. Filter broken (every scheduled tick treated as chain): `unrelatedClockNeverInFootprint` fails, "clock block 0, 2, 4 is in the footprint".
   2. Seeding off everywhere (`randomFor` returns the vanilla random): `seededChainRepeatsExactly` fails at the first TNT state (different kick).
   3. Only the three explosion sites unseeded (kick still seeded): fails at event 109, an explosion `WRITE` (different destroyed block); the TNT path before it is identical.
+  4. The previous commit's value-based matching (main code stashed, new test kept): `removedChainWorkDoesNotLeak` fails, "unrelated work ran as chain work: BLOCK_EVENT_RUN".
+  5. `Block.popResource`/`popResourceFromFace` unseeded: `seededChainRepeatsExactly` fails at the first item `ENTITY_STATE` (different position, same velocity).
+  6. Entity randoms not seeded: fails at the first item `ENTITY_STATE` (different velocity). The detector logs warnings for `Mth.createInsecureUUID` and `ItemEntity.<init>` (`:57,58,65`).
+- `seededChainRepeatsExactly` now compares **every** event (items and unseeded draws included) and also requires that no draw is outside the allowlist. `removedChainWorkDoesNotLeak` covers a merged tick, an own tick and a block event that are each cleared and then replaced by an unrelated one on the same spot.
+- A test that times out mid-recording leaves its undo log active, and later tests then fail with "a recording is already active". Generating force-loaded chunks can take long, so the limits are 800/1000 ticks (a passing run needs about 300).
 - `defaultRequire: 1` holds for the new mixins, so a wrong target fails start-up (checked for 1a; same config).
 
 **Known gaps (1b)**
-1. Merge marks are by (type, pos) for ticks and by value for block events. If a chain-marked pending tick or event is removed without running (`LevelTicks.clearArea`, `ServerLevel.java:1666`), a later unrelated one at the same key would be counted as chain.
+1. (Fixed, R7: identity tracking.) A chain tick is not followed across a chunk unload/reload; this is logged.
 2. Ticks dropped because their chunk is not loaded (`LevelTicks.java:74-75`) are not logged.
 3. Callers of the static `BlockEntity.setChanged(Level, BlockPos, BlockState)` (`:200`) bypass the hook. Non-living entities that override `hurtServer` join only when moved, pushed or spawned.
 4. An entity built in chain context is tagged in its constructor (via `setPos`), even if it is never added. Harmless, but it uses an index number.
 5. Chain influence through work that runs with context off is not followed. Example: a mob or random tick reacting to a block the chain placed. This is the intended rule (those are "outside the chain"), but the ghost run will diverge there if it matters.
 6. `ENTITY_STATE` is logged every tick for every chain entity, items included. Log size is not limited yet.
+7. `WatchedRandom` wraps the random of every level and entity, the client's included. Outside a recording that costs one static read per draw.
 
 ### Negative tests (kept as notes)
 Rerun the three break-it checks above whenever cause tracking changes.
@@ -232,3 +252,11 @@ Rerun the three break-it checks above whenever cause tracking changes.
 - Block entities: first-touch snapshot also on `setChanged()`, to catch changes through an old reference.
 
 **R5. 1a accepted.** The deliberate-break checks were the right check; kept as notes above.
+
+**R6. Item drops: seed them.** During chain work `Block.popResource` draws from the seeded stream; check the `ItemEntity` constructor and the spawn paths for their own random velocity and seed those under chain work too. Items are back in the seed test (they matter for hopper-fed machines and blast-pushed items). Known harmless unseeded draws go on an explicit allowlist (file:line + reason), still logged, marked "allowed"; anything else stays a warning.
+
+**R7. Removed-tick gap: fix before 1c.** Track chain ticks and block events by identity, not by position and block. When one is removed without running, drop it from the chain set. Test: a cancelled chain tick followed by an unrelated tick on the same spot must not count as chain work.
+
+**R8. Order of work:** close the undo-log gaps (scheduled ticks, block events, entity hurt/push snapshot, `setChanged` snapshot), then 1c (read footprint with the `BlockCollisions` hook and the "below FULL: no collision" event); commit after each part.
+
+**R9. Test setup vs real recording.** Force-loading in tests is fine; the real recording must never force-load or change ticket levels (the ghost copies real ticket levels).

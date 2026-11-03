@@ -2,7 +2,6 @@ package obsidivision.ghostpath.record;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -25,6 +24,8 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.ticks.ScheduledTick;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Cause tracking for one recording (build step 1b).
@@ -50,6 +51,7 @@ import org.jspecify.annotations.Nullable;
  * <p>Single server thread only; one tracker at a time.
  */
 public final class CauseTracker {
+    private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
     private static @Nullable CauseTracker active;
 
     public static @Nullable CauseTracker active() {
@@ -84,8 +86,6 @@ public final class CauseTracker {
         return t != null && t.inChain(level) ? t.chainRandom : vanilla;
     }
 
-    private record TickKey(Object type, BlockPos pos) {}
-
     private final ServerLevel level;
     private final Thread thread;
     private final long startTime;
@@ -95,9 +95,10 @@ public final class CauseTracker {
     private final List<ChainEvent> events = new ArrayList<>();
     private final Set<BlockPos> writes = new LinkedHashSet<>();
     private final Map<String, Integer> unseededSites = new LinkedHashMap<>();
+    // identity, not equality: a queued tick or block event that is removed without running must never let a later,
+    // equal-looking one count as chain work (ScheduledTick/BlockEventData are records with value equality)
     private final Set<ScheduledTick<?>> chainTicks = Collections.newSetFromMap(new IdentityHashMap<>());
-    private final Set<TickKey> mergedTicks = new HashSet<>();
-    private final Set<BlockEventData> chainBlockEvents = new HashSet<>();
+    private final Set<BlockEventData> chainBlockEvents = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<Entity, Integer> chainEntities = new IdentityHashMap<>();
     private final Set<BlockEntity> chainBlockEntities = Collections.newSetFromMap(new IdentityHashMap<>());
 
@@ -207,40 +208,54 @@ public final class CauseTracker {
 
     // ---- hooks: scheduled ticks ----
 
-    /** Before {@code LevelChunkTicks.schedule}; {@code alreadyPending}: an equal (type, pos) tick is queued, so ours is dropped. */
-    public void onTickScheduled(ScheduledTick<?> tick, boolean alreadyPending) {
+    /**
+     * Before {@code LevelChunkTicks.schedule}. {@code pending}: the queued tick with the same (type, pos), which makes
+     * vanilla drop ours (it joins the chain instead: "merged"); {@code pendingUnreachable}: such a tick exists only as
+     * a not-yet-unpacked saved tick, so there is no object to follow.
+     */
+    public void onTickScheduled(ScheduledTick<?> tick, @Nullable ScheduledTick<?> pending, boolean pendingUnreachable) {
         if (!this.inChainAnyLevel()) {
             return;
         }
-        if (alreadyPending) {
-            this.mergedTicks.add(new TickKey(tick.type(), tick.pos()));
+        String how = "";
+        if (pending != null) {
+            this.chainTicks.add(pending);
+            how = " merged";
+        } else if (pendingUnreachable) {
+            how = " merged into a saved tick: not followed";
         } else {
             this.chainTicks.add(tick);
         }
         this.log(ChainEvent.Kind.TICK_SCHEDULED, tick.pos(), tick.type() + " delay=" + (tick.triggerTick() - this.level.getGameTime())
-            + " priority=" + tick.priority() + (alreadyPending ? " merged" : ""));
+            + " priority=" + tick.priority() + how);
     }
 
     /** A collected tick is about to run. Returns true if it is chain work. */
     public boolean onTickRun(ScheduledTick<?> tick) {
-        boolean own = this.chainTicks.remove(tick);
-        boolean merged = this.mergedTicks.remove(new TickKey(tick.type(), tick.pos()));
-        if (own || merged) {
+        if (this.chainTicks.remove(tick)) {
             this.log(ChainEvent.Kind.TICK_RUN, tick.pos(), String.valueOf(tick.type()));
             return true;
         }
         return false;
     }
 
+    /** A queued tick was removed without running ({@code LevelTicks.clearArea}, or its chunk was unloaded). */
+    public void onTickRemoved(ScheduledTick<?> tick, String why) {
+        if (this.chainTicks.remove(tick)) {
+            this.log(ChainEvent.Kind.TICK_CANCELLED, tick.pos(), tick.type() + " " + why);
+        }
+    }
+
     // ---- hooks: block events ----
 
-    public void onBlockEventQueued(Level level, BlockEventData data, boolean alreadyQueued) {
+    /** {@code queued} is the object now in the queue: ours, or the equal one already queued ({@code merged}). */
+    public void onBlockEventQueued(Level level, BlockEventData queued, boolean merged) {
         if (!this.inChain(level)) {
             return;
         }
-        this.chainBlockEvents.add(data);
-        this.log(ChainEvent.Kind.BLOCK_EVENT_QUEUED, data.pos(), data.block() + " " + data.paramA() + "," + data.paramB()
-            + (alreadyQueued ? " merged" : ""));
+        this.chainBlockEvents.add(queued);
+        this.log(ChainEvent.Kind.BLOCK_EVENT_QUEUED, queued.pos(), queued.block() + " " + queued.paramA() + "," + queued.paramB()
+            + (merged ? " merged" : ""));
     }
 
     public boolean onBlockEventRun(BlockEventData data) {
@@ -249,6 +264,13 @@ public final class CauseTracker {
             return true;
         }
         return false;
+    }
+
+    /** A queued block event was removed without running ({@code ServerLevel.clearBlockEvents}). */
+    public void onBlockEventRemoved(BlockEventData data) {
+        if (this.chainBlockEvents.remove(data)) {
+            this.log(ChainEvent.Kind.BLOCK_EVENT_CANCELLED, data.pos(), data.block() + " " + data.paramA() + "," + data.paramB());
+        }
     }
 
     // ---- hooks: entities ----
@@ -283,26 +305,46 @@ public final class CauseTracker {
 
     // ---- hooks: randomness ----
 
-    /** Chain work drew from the level's unseeded random (called by {@link WatchedRandom}). */
-    public void onUnseededDraw(String method) {
-        String site = callSite();
-        this.unseededSites.merge(site, 1, Integer::sum);
-        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, method + " at " + site);
+    /** Chain work drew from an unseeded random ({@code Level.random} or an entity's own); called by {@link WatchedRandom}. */
+    public void onUnseededDraw(String source, String method) {
+        String[] site = callSite();
+        String reason = UnseededDrawAllowlist.reason(site[1]);
+        String display = source + "." + method + " at " + site[0];
+        if (this.unseededSites.merge(display, 1, Integer::sum) == 1 && reason == null) {
+            LOGGER.warn("[ghostpath] unseeded draw by chain work, not on the allowlist: {}", display);
+        }
+        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason == null ? " WARNING: not allowed" : " allowed: " + reason));
     }
 
-    /** First caller outside the random classes; a frame in net.minecraft.util (Util.shuffle, Mth) also names its caller. */
-    private static String callSite() {
+    /** Seed for the own random of an entity built by chain work: one draw from the chain stream. */
+    public long nextEntitySeed() {
+        return this.chainRandom.nextLong();
+    }
+
+    /**
+     * {display, key}. Display: the first caller outside the random classes; if that is a helper in net.minecraft.util
+     * (Mth, Util), its caller is added. Key: "File.java:line" of the first frame outside those helpers (allowlist key).
+     */
+    private static String[] callSite() {
         return StackWalker.getInstance().walk(frames -> {
             List<String> parts = new ArrayList<>();
-            frames.filter(f -> !f.getClassName().startsWith("obsidivision.ghostpath.")
-                    && !f.getClassName().equals("net.minecraft.util.RandomSource"))
-                .limit(2)
-                .forEach(f -> parts.add(f.getClassName().substring(f.getClassName().lastIndexOf('.') + 1) + "." + f.getMethodName()
-                    + "(" + f.getFileName() + ":" + f.getLineNumber() + ")"));
-            if (parts.isEmpty()) {
-                return "unknown";
+            String key = null;
+            for (StackWalker.StackFrame f : (Iterable<StackWalker.StackFrame>) frames::iterator) {
+                String cls = f.getClassName();
+                if (cls.startsWith("obsidivision.ghostpath.") || cls.equals("net.minecraft.util.RandomSource")) {
+                    continue;
+                }
+                String name = cls.substring(cls.lastIndexOf('.') + 1) + "." + f.getMethodName() + "(" + f.getFileName() + ":" + f.getLineNumber() + ")";
+                boolean helper = cls.equals("net.minecraft.util.Mth") || cls.equals("net.minecraft.util.Util");
+                if (parts.isEmpty() || parts.size() == 1 && parts.get(0).startsWith("Mth.") || parts.size() == 1 && parts.get(0).startsWith("Util.")) {
+                    parts.add(name);
+                }
+                if (!helper) {
+                    key = f.getFileName() + ":" + f.getLineNumber();
+                    break;
+                }
             }
-            return parts.get(0).startsWith("Util.") || parts.get(0).startsWith("Mth.") ? String.join(" <- ", parts) : parts.get(0);
+            return new String[] {parts.isEmpty() ? "unknown" : String.join(" <- ", parts), key == null ? "unknown" : key};
         });
     }
 }

@@ -2,12 +2,12 @@ package obsidivision.ghostpath.mixin;
 
 import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
+import java.util.function.Predicate;
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
-import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.BlockEventData;
-import net.minecraft.world.level.block.Block;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Final;
@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerLevel.class)
@@ -42,14 +42,44 @@ public abstract class ServerLevelMixin {
         }
     }
 
-    /** 26.2 ServerLevel.java:1247 {@code public void blockEvent(BlockPos, Block, int, int)}: queues a BlockEventData (:1248). */
-    @Inject(method = "blockEvent", at = @At("HEAD"))
-    private void ghostpath$beforeBlockEvent(BlockPos pos, Block block, int b0, int b1, CallbackInfo ci) {
+    /**
+     * 26.2 ServerLevel.java:1247-1249 {@code blockEvent(BlockPos, Block, int, int)}: {@code blockEvents.add(new
+     * BlockEventData(...))}. The queue is a set: if an equal event is queued already, ours is dropped and the queued
+     * object joins the chain instead. Tracked by identity of the queued object.
+     */
+    @WrapOperation(method = "blockEvent", at = @At(value = "INVOKE", target = "Lit/unimi/dsi/fastutil/objects/ObjectLinkedOpenHashSet;add(Ljava/lang/Object;)Z"))
+    private boolean ghostpath$queueBlockEvent(ObjectLinkedOpenHashSet<Object> queue, Object event, Operation<Boolean> original) {
+        boolean added = original.call(queue, event);
         CauseTracker tracker = CauseTracker.active();
-        if (tracker != null) {
-            BlockEventData data = new BlockEventData(pos, block, b0, b1);
-            tracker.onBlockEventQueued((ServerLevel) (Object) this, data, this.blockEvents.contains(data));
+        if (tracker != null && tracker.inChain((ServerLevel) (Object) this)) {
+            BlockEventData queued = (BlockEventData) event;
+            if (!added) {
+                for (BlockEventData existing : this.blockEvents) {
+                    if (existing.equals(event)) {
+                        queued = existing;
+                        break;
+                    }
+                }
+            }
+            tracker.onBlockEventQueued((ServerLevel) (Object) this, queued, !added);
         }
+        return added;
+    }
+
+    /**
+     * 26.2 ServerLevel.java:1665-1667 {@code clearBlockEvents(BoundingBox)} ({@code @VisibleForTesting}; used by the
+     * game-test framework, StructureUtils.java:74, GameTestInfo.java:78): removes queued events without running them.
+     */
+    @ModifyArg(method = "clearBlockEvents", at = @At(value = "INVOKE", target = "Lit/unimi/dsi/fastutil/objects/ObjectLinkedOpenHashSet;removeIf(Ljava/util/function/Predicate;)Z"))
+    private Predicate<BlockEventData> ghostpath$watchClearBlockEvents(Predicate<BlockEventData> inside) {
+        return event -> {
+            boolean removed = inside.test(event);
+            CauseTracker tracker = CauseTracker.active();
+            if (removed && tracker != null) {
+                tracker.onBlockEventRemoved(event);
+            }
+            return removed;
+        };
     }
 
     /** 26.2 ServerLevel.java:1278 {@code private boolean doBlockEvent(BlockEventData)}, called from runBlockEvents (:1258). */

@@ -12,6 +12,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.RepeaterBlock;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.ChainEvent;
 import obsidivision.ghostpath.record.UndoLog;
@@ -92,7 +93,7 @@ public class CauseTrackingTest {
      * line the whole time. It writes blocks and schedules ticks every few ticks during the recording, but none of that
      * may enter the chain: no write, no event at any clock position.
      */
-    @GameTest(maxTicks = 300, padding = 24, environment = "ghostpath-gametest:cause_clock")
+    @GameTest(maxTicks = 800, padding = 24, environment = "ghostpath-gametest:cause_clock")
     public void unrelatedClockNeverInFootprint(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);
@@ -151,10 +152,11 @@ public class CauseTrackingTest {
 
     /**
      * DESIGN R1: with the same seed, the machine runs twice (undo log restores in between) and the chain must be
-     * identical: every write, tick, block event, and the primed TNT's exact position and velocity on every tick. Item
-     * entities from the blast are left out: their spawn velocity is an unseeded draw (reported, see the log).
+     * identical, event for event: every write, tick, block event, every chain entity's exact position and velocity on
+     * every tick (the primed TNT and the items the blast drops), and every unseeded draw. Item drop positions and the
+     * items' own randoms are seeded (1b follow-up ruling), so items must repeat exactly too.
      */
-    @GameTest(maxTicks = 400, padding = 24, environment = "ghostpath-gametest:cause_seed")
+    @GameTest(maxTicks = 1000, padding = 24, environment = "ghostpath-gametest:cause_seed")
     public void seededChainRepeatsExactly(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);
@@ -167,6 +169,7 @@ public class CauseTrackingTest {
             List<String> a = runs.get(0);
             List<String> b = runs.get(1);
             helper.assertTrue(a.stream().anyMatch(s -> s.contains("ENTITY_STATE") && s.contains("minecraft:tnt")), "primed TNT never ticked as chain work");
+            helper.assertTrue(a.stream().anyMatch(s -> s.contains("ENTITY_STATE") && s.contains("minecraft:item")), "no item entity from the blast, so items are not tested");
             long destroyed = a.stream().filter(s -> s.contains(" WRITE ") && s.endsWith("-> Block{minecraft:air}")).count();
             helper.assertTrue(destroyed >= 10, "the explosion should destroy blocks, got " + destroyed + " writes to air");
             for (int i = 0; i < Math.max(a.size(), b.size()); i++) {
@@ -174,6 +177,8 @@ public class CauseTrackingTest {
                 String y = i < b.size() ? b.get(i) : "<end>";
                 helper.assertTrue(x.equals(y), "runs differ at event " + i + ":\n  run 1: " + x + "\n  run 2: " + y);
             }
+            helper.assertTrue(a.stream().noneMatch(s -> s.contains("WARNING: not allowed")),
+                "unseeded draw not on the allowlist: " + a.stream().filter(s -> s.contains("WARNING")).findFirst().orElse(""));
             LOG.info("[ghostpath] seeded runs identical: {} events, {} destroyed blocks", a.size(), destroyed);
             helper.succeed();
         });
@@ -196,21 +201,63 @@ public class CauseTrackingTest {
         });
     }
 
-    /** Events that must match between two seeded runs: all but unseeded draws and non-TNT entities. */
+    /** Every event must match between two seeded runs. */
     private static List<String> comparable(CauseTracker tracker) {
-        List<String> out = new ArrayList<>();
-        for (ChainEvent e : tracker.events()) {
-            switch (e.kind()) {
-                case UNSEEDED_DRAW -> { }
-                case ENTITY_TAGGED, ENTITY_STATE -> {
-                    if (e.detail().contains("minecraft:tnt")) {
-                        out.add(e.toString());
-                    }
-                }
-                default -> out.add(e.toString());
-            }
+        return tracker.events().stream().map(ChainEvent::toString).toList();
+    }
+
+    // ------------------------------------------------------------------------------------------------------------
+
+    /**
+     * Chain ticks and block events are followed by identity. Three spots, each: chain work queues something there, it is
+     * removed without running (clearArea / clearBlockEvents, the only vanilla removal paths besides chunk unload), then
+     * unrelated work queues an equal-looking tick or event on the same spot. The unrelated one must not run as chain work.
+     * P: the chain's tick is merged into an unrelated pending tick (the chain adopts that tick object).
+     * Q: the chain's own tick. R: the chain's block event.
+     */
+    @GameTest(maxTicks = 100, environment = "ghostpath-gametest:cause_cancel")
+    public void removedChainWorkDoesNotLeak(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos p = helper.absolutePos(new BlockPos(1, 2, 1));
+        BlockPos q = helper.absolutePos(new BlockPos(3, 2, 1));
+        BlockPos r = helper.absolutePos(new BlockPos(5, 2, 1));
+        // stone: its tick and block event do nothing (BlockBehaviour defaults), but both still run
+        for (BlockPos pos : List.of(p, q, r)) {
+            level.setBlock(pos, Blocks.STONE.defaultBlockState(), 3);
         }
-        return out;
+        CauseTracker tracker = CauseTracker.begin(level, SEED);
+        try {
+            level.scheduleTick(p, Blocks.STONE, 5);                                        // unrelated, pending
+            tracker.runAsChain(() -> level.scheduleTick(p, Blocks.STONE, 3));               // merged into it
+            tracker.runAsChain(() -> level.scheduleTick(q, Blocks.STONE, 3));               // chain's own
+            tracker.runAsChain(() -> level.blockEvent(r, Blocks.STONE, 1, 2));              // chain's own
+            for (BlockPos pos : List.of(p, q, r)) {
+                level.getBlockTicks().clearArea(new BoundingBox(pos));
+                level.clearBlockEvents(new BoundingBox(pos));
+            }
+            level.scheduleTick(p, Blocks.STONE, 2);                                        // unrelated, same spot
+            level.scheduleTick(q, Blocks.STONE, 2);
+            level.blockEvent(r, Blocks.STONE, 1, 2);
+        } catch (RuntimeException e) {
+            tracker.end();
+            throw e;
+        }
+        helper.runAfterDelay(6, () -> {
+            tracker.end();
+            report("cancel", tracker);
+            helper.assertTrue(!level.getBlockTicks().hasScheduledTick(p, Blocks.STONE) && !level.getBlockTicks().hasScheduledTick(q, Blocks.STONE),
+                "the unrelated ticks should have run by now");
+            for (ChainEvent e : tracker.events()) {
+                String kind = e.kind().name();
+                helper.assertTrue(!kind.equals("TICK_RUN") && !kind.equals("BLOCK_EVENT_RUN"), "unrelated work ran as chain work: " + e);
+            }
+            helper.assertTrue(tracker.events().stream().anyMatch(e -> e.detail().contains("merged") && p.equals(e.pos())), "P: no merge recorded");
+            for (BlockPos pos : List.of(p, q, r)) {
+                helper.assertTrue(tracker.events().stream().anyMatch(e -> e.kind().name().endsWith("_CANCELLED") && pos.equals(e.pos())),
+                    "no cancellation recorded at " + pos.toShortString());
+            }
+            helper.succeed();
+        });
     }
 
     private static void report(String name, CauseTracker tracker) {
