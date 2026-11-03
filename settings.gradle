@@ -1,6 +1,10 @@
 pluginManagement {
     repositories {
-        maven { url = 'https://maven.fabricmc.net/' }
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        // repo1 mirror: repo.maven.apache.org returned HTTP 429 from this shared IP
         maven { url = 'https://repo1.maven.org/maven2/' }
         gradlePluginPortal()
     }

@@ -1,16 +1,17 @@
 package obsidivision.ghostpath.test;
 
-import net.fabricmc.fabric.api.gametest.v1.FabricGameTest;
-import net.minecraft.block.Blocks;
-import net.minecraft.test.GameTest;
-import net.minecraft.test.TestContext;
-import net.minecraft.util.math.BlockPos;
+import net.fabricmc.fabric.api.gametest.v1.GameTest;
+import net.minecraft.core.BlockPos;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.world.level.block.Blocks;
 
-public class SmokeTest implements FabricGameTest {
-    @GameTest(templateName = FabricGameTest.EMPTY_STRUCTURE)
-    public void blocksWork(TestContext ctx) {
-        ctx.setBlockState(new BlockPos(0, 1, 0), Blocks.STONE);
-        ctx.expectBlock(Blocks.STONE, new BlockPos(0, 1, 0));
-        ctx.complete();
+/** Proves the headless 26.2 game test harness runs at all. */
+public class SmokeTest {
+    @GameTest
+    public void stoneStaysStone(GameTestHelper helper) {
+        BlockPos pos = new BlockPos(1, 1, 1);
+        helper.setBlock(pos, Blocks.STONE);
+        helper.assertBlockPresent(Blocks.STONE, pos);
+        helper.succeed();
     }
 }
