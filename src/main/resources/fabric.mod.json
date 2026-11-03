@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "ghostpath",
+  "version": "${version}",
+  "name": "Ghost Path",
+  "description": "Shows where TNT and projectiles will go, as a live path in the world.",
+  "authors": ["obsidivision"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["obsidivision.ghostpath.GhostPath"]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "minecraft": "~1.21.1",
+    "java": ">=21",
+    "fabric-api": "*"
+  }
+}

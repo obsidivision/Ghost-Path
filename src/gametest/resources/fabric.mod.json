@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "ghostpath-gametest",
+  "version": "1.0.0",
+  "name": "Ghost Path game tests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["obsidivision.ghostpath.test.SmokeTest"]
+  },
+  "depends": { "ghostpath": "*" }
+}

@@ -1,0 +1,8 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        maven { url = 'https://repo1.maven.org/maven2/' }
+        gradlePluginPortal()
+    }
+}
+rootProject.name = 'ghostpath'
