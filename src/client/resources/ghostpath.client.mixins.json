@@ -3,7 +3,9 @@
   "package": "obsidivision.ghostpath.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "ClientLevelPreviewMixin"
+    "ClientLevelPreviewMixin",
+    "ParticleEngineGuardMixin",
+    "SoundManagerGuardMixin"
   ],
   "injectors": {
     "defaultRequire": 1
