@@ -1,5 +1,7 @@
 package obsidivision.ghostpath.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -29,6 +31,21 @@ public abstract class LevelChunkMixin {
         if (tracker != null) {
             tracker.onBlockWrite((LevelChunk) (Object) this, pos, state);
         }
+    }
+
+    /**
+     * 26.2 LevelChunk.java:344, in setBlockState: {@code blockEntity.setBlockState(state)}, the branch where the block
+     * entity is kept across a state change (same block, e.g. a hopper's ENABLED or FACING). Chain work there tags the
+     * block entity (ruling, gap 1). Its undo-log snapshot was already taken at HEAD of setBlockState (captureBlock saves
+     * the state and the block entity NBT of the position before the change).
+     */
+    @WrapOperation(method = "setBlockState", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/entity/BlockEntity;setBlockState(Lnet/minecraft/world/level/block/state/BlockState;)V"))
+    private void ghostpath$keptBlockEntityState(BlockEntity blockEntity, BlockState state, Operation<Void> original) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onBlockEntityStateChanged(((LevelChunk) (Object) this).getLevel(), blockEntity);
+        }
+        original.call(blockEntity, state);
     }
 
     /**

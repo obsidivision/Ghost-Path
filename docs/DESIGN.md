@@ -225,7 +225,7 @@ Everything else (players, mobs, random ticks, unrelated redstone) runs with cont
 - Chunk unload, `LevelTicks.removeContainer` (`:61-68`). The ticks are saved and come back as new objects on reload (`LevelChunkTicks.unpack`, `:109-114`), so a chain tick cannot be followed across an unload. It is logged as cancelled ("saved with unloading chunk: not followed").
 - A merge into a tick that exists only as an un-unpacked saved tick (`pendingTicks`, `:20`) has no object to follow. It is logged as "merged into a saved tick: not followed".
 
-**Event log** (`ChainEvent`, ticks relative to the start, no UUIDs): `WRITE` (block state change, or block entity `setChanged`), `TICK_SCHEDULED`/`TICK_RUN`, `BLOCK_EVENT_QUEUED`/`BLOCK_EVENT_RUN`, `ENTITY_TAGGED`, `ENTITY_STATE` (exact position and velocity of each chain entity after each of its ticks), `BLOCK_ENTITY_TAGGED`, `UNSEEDED_DRAW`. This is the log step 3 compares.
+**Event log** (`ChainEvent`, ticks relative to the start, no UUIDs): `WRITE` (block state change, or block entity `setChanged`), `TICK_SCHEDULED`/`TICK_RUN`, `BLOCK_EVENT_QUEUED`/`BLOCK_EVENT_RUN`, `ENTITY_TAGGED`, `ENTITY_STATE` (exact position and velocity of each chain entity after each of its ticks), `BLOCK_ENTITY_TAGGED`, `UNSEEDED_DRAW`; since the gap ruling also `CHAIN_UNLOADED`, `LEFT_DIMENSION`, `VIBRATION_UNTRACKED`. This is the log step 3 compares.
 **Footprint so far:** positions of chain `WRITE`s (destroyed blocks included, R1). Reads are step 1c.
 
 **Randomness (R1, R6), implemented.** One `RandomSource.create(seed)` per tracker, created at `begin`. During chain work in the tracked level these sites draw from it:
@@ -340,7 +340,7 @@ Code: `record/MachineRecorder.java`, `record/Recording.java`, `record/RecordingS
 
 **Run.** `UndoLog.begin` + `CauseTracker.begin(level, SEED, kick)` + trigger, then the end-of-server-tick hook checks `CauseTracker.pending()` once per tick. Seed `MachineRecorder.SEED` is fixed, so the same machine gives the same run. It stops when nothing is pending, or at the tick limit (counted in server ticks; the reported number is game ticks), then `tracker.end()`, `undo.restore()`, a `Recording` is stored in `RecordingStore.latest()` (memory only) and the summary is printed. **If the limit is hit the summary says so and what was still pending** ("STOPPED AT THE TICK LIMIT (5), chain work still pending: 1 ticks, ..."). A stop request restores first (`SERVER_STOPPING`) so the half-run machine is not saved. An autosave in the middle of a recording **cannot** be prevented: it would save the half-run world (not covered; at most `limit` ticks).
 
-**What "pending" means** (`CauseTracker.pending()`): chain scheduled ticks and block events not yet run or removed; chain entities still in the level; chain moving-piston block entities not yet finished (the piston movement is work that no scheduled tick shows). **Interpretation to confirm:** the ruling says "every chain entity is gone", but the 1b machine's blast leaves item entities that lie on the ground for 6000 ticks, so a literal reading makes this machine always run into the 2000-tick limit. Item entities therefore count as gone once they are on the ground and their position did not change for two ticks in a row. Everything else (TNT, falling blocks, minecarts, an item that keeps moving) must really be gone. **Not counted as pending:** other chain block entities (a hopper on cooldown moving the next item, a dropper, ...); a hopper-fed machine would be cut short. Not covered yet.
+**What "pending" means** (`CauseTracker.pending()`): chain scheduled ticks and block events not yet run or removed; chain entities still in the level; chain block entities that are busy (since the gap ruling below: a moving piston, a block entity chain work changed in the last 8 ticks, or a hopper with cooldown above 0). **Interpretation to confirm:** the ruling says "every chain entity is gone", but the 1b machine's blast leaves item entities that lie on the ground for 6000 ticks, so a literal reading makes this machine always run into the 2000-tick limit. Item entities therefore count as gone once they are on the ground and their position did not change for two ticks in a row. Everything else (TNT, falling blocks, minecarts, an item that keeps moving) must really be gone. (Fixed by the gap ruling: busy chain block entities are pending, see "Cause-tracking gaps closed" below.)
 
 **Kick off.** `PrimedTnt` constructor `:69` `setDeltaMovement(-sin(rot) * 0.02, 0.2, -cos(rot) * 0.02)` is wrapped (`PrimedTntMixin`): the angle is still drawn from the chain stream (so everything after stays in step), the horizontal parts are replaced by 0, the fixed upward 0.2 stays (measured first velocity after one tick: (0, 0.1568, 0) off; (0.0166, 0.1568, -0.0105) on). "Use 0" is read as the horizontal kick being 0, not the whole velocity. Applies to every TNT built by chain work (`TntBlock.wasExploded` too). The setting used is stored in the recording (`kickApplied`) for the ghost.
 
@@ -352,10 +352,73 @@ Code: `record/MachineRecorder.java`, `record/Recording.java`, `record/RecordingS
 
 **Known gaps (1d)**
 1. Autosave during a recording saves the half-run world. A crash during a recording leaves it half-run.
-2. Chain block entities other than moving pistons are never "pending" (hopper machines end early).
+2. (Fixed after 1d: busy chain block entities count as pending.)
 3. The recording runs on the live server, so a player or mob near the machine can change the run; they are outside the chain and normally leave it alone, but the world around is real. Players inside the blast are not hurt in the undo log (players are never touched).
 4. The weather and light findings above.
 5. Not tested: the singleplayer-owner permission branch; a button as the trigger (same code path as the lever, `ButtonBlock.press`).
+
+---
+
+## Cause-tracking gaps closed (ruling after 1d)  [implemented]
+Code: `CauseTracker` (new hooks, `pending()`, `notFollowed()`), `Recording.summary()` ("Not followed" line); mixins `LevelChunkMixin` (kept block entity), `VibrationListenerMixin`, `ItemEntityMixin`, `HopperBlockEntityMixin`, `HopperBlockEntityAccessor`, `EntityMixin` (removal), `ServerLevelMixin` (chunk unload), and the dispenser mixins listed below. Tests: `ChainGapsTest` (8 tests: hopper enabled by chain, hopper cooldown pending, chain piston to sculk sensor, item merge, hopper pickup, dispensers, unload, change of dimension).
+
+| Gap | Joins the chain / logged when | Hook (26.2) |
+|---|---|---|
+| 1. block entity whose state the chain changes | chain work sets a new state at a position that keeps its block entity: the block entity is tagged ("block state changed") | `LevelChunk.setBlockState`, the `blockEntity.setBlockState(state)` call in the keep branch (`LevelChunk.java:344`). The undo snapshot (state + block entity NBT) is already taken at HEAD of the same method (`captureBlock`), i.e. before the change |
+| 2. vibrations | chain work emits a game event that schedules a vibration on a listener. Block-entity owner (sculk sensor, calibrated sensor, shrieker): tagged ("vibration"). Entity owner (warden, allay): `VIBRATION_UNTRACKED` event "vibration to untracked entity", not followed | HEAD of `VibrationSystem$Listener.scheduleVibration` (`VibrationSystem.java:247-251`; `handleGameEvent` :235 and `forceScheduleVibration` :244 end there). Game events are delivered synchronously (`GameEventDispatcher.post`, `GameEventDispatcher.java:22-61`), so the chain context is still on |
+| 5a. item merge | a chain item merges into another item, whichever of the two is ticking: the receiver is tagged ("merged chain item") | HEAD of `ItemEntity.merge(ItemEntity, ItemStack, ItemEntity, ItemStack)` (`ItemEntity.java:252`, from `tryToMerge` :222). Undo snapshot of both items there (`setItem` goes through no other hook) |
+| 5b. hopper pickup | a hopper takes items from a chain item (item discarded or count changed): the hopper block entity, or a hopper minecart, is tagged ("picked up chain item") | wrap of `HopperBlockEntity.addItem(Container, ItemEntity)` (`HopperBlockEntity.java:265`; from `suckInItems` :236 and `MinecartHopper.java:110`) |
+| 6. dispensers changing an entity | the behaviour changed the entity (calls that report success: only on true): the entity is tagged ("dispenser ..."), and the undo log snapshots it just before | see list below |
+| 7. unloaded with its chunk | `CHAIN_UNLOADED` event, "chain entity unloaded #i type pos=..." / "chain block entity unloaded type", with position and tick. `pending()` counts it as gone; the summary names it | entity: `Entity.setRemoved` HEAD with `UNLOADED_TO_CHUNK` (`PersistentEntitySectionManager.java:224`); block entity: HEAD of `ServerLevel.unload(LevelChunk)` (`ServerLevel.java:1010`, before `clearAllBlockEntities` :1011 / `LevelChunk.java:675-680`) |
+| 8. change of dimension | `LEFT_DIMENSION` event "left dimension #i type pos=..."; the entity leaves the chain set (no longer pending, no longer followed). The copy in the new level is not tagged (it is built in another level) | `Entity.setRemoved` HEAD with `CHANGED_DIMENSION` (`Entity.removeAfterChangingDimensions`, `Entity.java:3175`, from `teleportCrossDimension` :3069) |
+
+**Dispense behaviours covered (gap 6)** (every registration in `DispenseItemBehavior.bootStrap` and `DispenserBlock.getDispenseMethod` read; the ones that change an existing entity):
+- shears: `ShearsDispenseItemBehavior.tryShearEntity` (`:50-64`): `shearOffAllLeashConnections` (`:52`, tagged only if it returns true) and `Shearable.shear` (`:57`; sheep, mooshroom, snow golem, bogged, ...);
+- equipment: `EquipmentDispenseItemBehavior.dispenseEquipment` (`:20-36`), `setItemSlot` at `:30`: armour, saddles, llama carpets, horse armour; also reached from the wither-skull and carved-pumpkin behaviours (`DispenseItemBehavior.java:237,258`) and for any equippable item (`DispenserBlock.java:123`);
+- chest on a donkey, mule or llama: anonymous behaviour `DispenseItemBehavior$2` (`DispenseItemBehavior.java:93-114`, `slot.set` at `:104`);
+- brush on an armadillo: anonymous `DispenseItemBehavior$11` (`:318-338`, `brushOffScute` at `:330`). The two anonymous class numbers were read from the compiled jar with javap; a renumbering fails start-up (`defaultRequire 1`);
+- flint and steel priming a sulfur cube: `FlintAndSteelDispenseItemBehavior.tryIgniteExplosiveEntities` (`:51-58`, `primeTime` at `:57`);
+- a block given to a sulfur cube: `SulfurCubeBlockDispenseItemBehavior.dispenseBlock` (`:20-29`, `equipItem` at `:22`; also from the TNT behaviour, `DispenseItemBehavior.java:208`).
+
+Not hooked because they need nothing: behaviours that spawn an entity (projectiles, boats, minecarts, armor stands, spawn eggs, TNT, fish buckets) are already covered by `addEntity`; buckets, bone meal, glowstone, honeycomb, bottles, shulker boxes change blocks only.
+
+**`pending()` (ruling).** A chain block entity still in the level is pending while: it is a moving piston; or chain work tagged it, changed it (`setChanged`) or changed its block state within the last 8 ticks (`CauseTracker.BLOCK_ENTITY_BUSY_TICKS`); or it is a hopper with `cooldownTime > 0` (`HopperBlockEntity.java:38`, read with an accessor; `isOnCooldown` `:426-428`). The hopper case is needed because the hopper marks itself changed through the static `BlockEntity.setChanged(Level, BlockPos, BlockState)` (`HopperBlockEntity.java:125`), which the instance hook does not see. `Pending` now reports `blockEntities` (was `movingPistons`).
+
+**Summary.** A line `Not followed: N - ...` is added, only when there is something to list: each `CHAIN_UNLOADED`, `LEFT_DIMENSION` and `VIBRATION_UNTRACKED` event with its tick and position (`Recording.notFollowed`).
+
+**Findings while testing**
+- A sculk sensor that is receiving a vibration calls `setChanged` every tick of the travel time (`VibrationSystem.User.onDataChanged`), so a chain sensor writes a "block entity data" event each tick until it activates. Correct, just verbose.
+- The first version tagged the target before the dispense call; the shears loop calls `shearOffAllLeashConnections` on every entity in the box, so the sheep was tagged as "leash" although it had no leash. Tagging now happens after the call and only on success; the undo snapshot stays before it.
+- Unloading in the test: a force-loaded chunk 100 chunks away (no other ticket) unloaded 2 ticks after the ticket was removed; entity and block entity were both logged at the same tick. The game-test world persists between runs, so the test first clears what an earlier run saved in that chunk.
+
+**Problems these hooks make visible (not fixed, for a ruling):**
+1. A tagged **mob** (a sheep sheared by a chain dispenser, an allay, a horse given a chest) is chain work for good: its AI ticks become chain work, it never leaves, so `pending()` keeps the recording running up to the tick limit, and its AI draws from its own unseeded random show up as unseeded-draw warnings. The test uses a NoAI sheep and does not run the recorder, so this was read from the code, not seen.
+2. Gap 1 tags on every kept-block-entity state change by chain work, also ones that do not affect the block entity's behaviour (a chest's facing). The only cost is that its ticks count as chain work.
+
+**Verification.** All 22 game tests pass; `./gradlew build` passes. Break-it checks, one at a time, each made `runGameTest` exit 1 in its own test for its own reason, then restored:
+1. Kept-block-entity hook off: "hopper not tagged when chain work changed its block state".
+2. Vibration hook off: "sculk sensor not tagged by the chain vibration".
+3. Merge hook off: "receiving item not tagged after a chain item merged into it".
+4. Hopper pickup hook off: "hopper not tagged after picking up a chain item".
+5. Dispenser tag off: "sheared sheep not tagged".
+6. Block-entity unload log off: "no 'chain block entity unloaded' event at the chest" (the TNT event still there).
+7. Entity unload log off: "no 'chain entity unloaded' event with the TNT's position" (the chest event still there).
+8. Left-dimension branch off: "no 'left dimension' event".
+9. `pending()` 8-tick rule off: "sculk sensor changed in the last 8 ticks not pending: 0".
+10. `pending()` hopper cooldown off: "hopper on cooldown not pending at t+20: 0".
+11. Both off (moving pistons only, the 1d rule): those two plus "pending() did not count the busy hopper/chest: max 0".
+
+**Break-it that did not fail:** the dispenser undo snapshot off (`beforeDispenserChange` doing nothing) still passes: the sheared sheep and the equipped armor stand are restored anyway. A ticking living entity calls `setDeltaMovement` every tick, so the undo log has already snapshotted it before the dispenser fires (its scheduled tick is 4 ticks after the trigger). The snapshot only matters for an entity that has not ticked since `begin` (for example one in a chunk that is not entity-ticking). It is kept as a safety net, but no test shows it is needed.
+
+### Not followed, by design (ruling)
+Chain influence through these paths is not followed. They run with context off, and the ghost may diverge there.
+- **3. POI.** A chain block change adds or removes a point of interest (`ServerLevel.updatePOIOnBlockStateChange`, `ServerLevel.java:1521`; remove `:1527`, add `:1531`). Villagers, bees and piglins read POIs later through their own AI.
+- **4. Mob paths.** A chain block change makes mobs recompute their path (`ServerLevel.sendBlockUpdated` `:1131`, `shouldRecomputePath` `:1146`, `recomputePath` `:1155`). The mob is not tagged.
+- **9. Random and weather ticks.** Random block and fluid ticks (`ServerLevel.tickChunk` `:496`, `randomTick` `:524` and `:529`), precipitation per chunk (`tickPrecipitation` called `:505`, defined `:578`: snow, ice, cauldrons) and the weather cycle (`advanceWeatherCycle` `:709`) run with context off, also at positions the chain wrote.
+- **10. Light.** Already open (see "Footprint additions": light reads are not repeatable, and the light engine is not copied).
+- **11. End gateway.** A chain entity using a gateway sets the gateway block entity's cooldown (`TheEndGatewayBlockEntity.portalTick` `:72`, `triggerCooldown` `:79`; destination `EndGatewayBlock.getPortalDestination` `:108`); the gateway is not tagged. The entity's own teleport stays in the same dimension (`Entity.teleportSameDimension`, `Entity.java:3052`) and is followed as a move.
+- **12. `/schedule`.** Scheduled functions run from `ServerLevel.tickTime` (`server.getScheduledEvents().tick`, `ServerLevel.java:480`) with context off; the ghost never runs them (finding 2).
+- **13. Despawn.** A chain mob despawning (`Mob.checkDespawn`, `Mob.java:685`, called at `ServerLevel.java:432`) or a chain item expiring after 6000 ticks (`ItemEntity.java:179-180`) just counts as gone; no event.
 
 ---
 

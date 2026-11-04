@@ -8,6 +8,8 @@
     "BlockDropMixin",
     "BlockEntityMixin",
     "BoundTickingBlockEntityMixin",
+    "BrushDispenseMixin",
+    "ChestOnHorseDispenseMixin",
     "ContainerRemoveItemMixin",
     "ContainerRemoveItemNoUpdateMixin",
     "ContainerSetItemMixin",
@@ -16,6 +18,11 @@
     "EntityHurtMixin",
     "EntityMixin",
     "EntityRandomMixin",
+    "EquipmentDispenseItemBehaviorMixin",
+    "FlintAndSteelDispenseMixin",
+    "HopperBlockEntityAccessor",
+    "HopperBlockEntityMixin",
+    "ItemEntityMixin",
     "LevelChunkMixin",
     "LevelChunkTicksMixin",
     "LevelEntityAreaMixin",
@@ -28,7 +35,10 @@
     "ServerExplosionMixin",
     "ServerLevelAccessor",
     "ServerLevelMixin",
-    "TntBlockMixin"
+    "ShearsDispenseItemBehaviorMixin",
+    "SulfurCubeBlockDispenseMixin",
+    "TntBlockMixin",
+    "VibrationListenerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -33,6 +33,8 @@ import net.minecraft.world.phys.AABB;
  * @param unseededDraws   chain draws from an unseeded random, by call site, with {@code allowed} or not
  * @param lateBlockEntities block entities that were changed before the undo log saw them (not restored exactly)
  * @param ticksNotRestored begin-time scheduled ticks the undo log could not put back
+ * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
+ *                        an entity listener), as event text with tick and position
  */
 public record Recording(
     ResourceKey<Level> dimension,
@@ -53,7 +55,8 @@ public record Recording(
     int unseededDrawsNotAllowed,
     int unseededDrawsAllowed,
     Set<BlockPos> lateBlockEntities,
-    int ticksNotRestored
+    int ticksNotRestored,
+    List<String> notFollowed
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime) {
@@ -80,7 +83,8 @@ public record Recording(
             tracker.addedChainEntities(net.minecraft.world.entity.EntityTypes.TNT),
             notAllowed, allowed,
             Set.copyOf(undo.lateBlockEntities()),
-            undo.ticksNotRestored());
+            undo.ticksNotRestored(),
+            tracker.notFollowed().stream().map(ChainEvent::toString).toList());
     }
 
     /** Block positions read or written: the footprint without entity areas. */
@@ -105,6 +109,10 @@ public record Recording(
             + (this.unseededDrawsAllowed > 0 ? " (+" + this.unseededDrawsAllowed + " allowed)" : ""));
         out.add("Late block entities: " + this.lateBlockEntities.size()
             + (this.ticksNotRestored > 0 ? "; scheduled ticks not restored: " + this.ticksNotRestored : ""));
+        if (!this.notFollowed.isEmpty()) {
+            // they count as gone for pending(), but the summary names each one (ruling, gaps 2, 7, 8)
+            out.add("Not followed: " + this.notFollowed.size() + " - " + String.join("; ", this.notFollowed));
+        }
         return out;
     }
 }

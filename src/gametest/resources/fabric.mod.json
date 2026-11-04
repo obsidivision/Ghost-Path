@@ -13,7 +13,8 @@
       "obsidivision.ghostpath.test.FootprintTest",
       "obsidivision.ghostpath.test.HurtCoverageTest",
       "obsidivision.ghostpath.test.FootprintVariationTest",
-      "obsidivision.ghostpath.test.MachineCommandTest"
+      "obsidivision.ghostpath.test.MachineCommandTest",
+      "obsidivision.ghostpath.test.ChainGapsTest"
     ]
   },
   "depends": {

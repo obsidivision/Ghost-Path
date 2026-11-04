@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.BlockEventData;
+import net.minecraft.world.level.chunk.LevelChunk;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Final;
@@ -16,6 +17,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ServerLevel.class)
@@ -90,6 +92,19 @@ public abstract class ServerLevelMixin {
         boolean[] result = new boolean[1];
         CauseTracker.within(tracker, tracker != null && tracker.onBlockEventRun(data), () -> result[0] = original.call(data));
         return result[0];
+    }
+
+    /**
+     * 26.2 ServerLevel.java:1010 {@code public void unload(LevelChunk)}: {@code clearAllBlockEntities} (:1011,
+     * LevelChunk.java:675-680) removes every block entity of the chunk. HEAD: chain block entities there are logged as
+     * unloaded (gap 7).
+     */
+    @Inject(method = "unload", at = @At("HEAD"))
+    private void ghostpath$beforeUnload(LevelChunk chunk, CallbackInfo ci) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onChunkUnload(chunk);
+        }
     }
 
     /** 26.2 ServerLevel.java:822 {@code public void tickNonPassenger(Entity)}: one entity's tick, then its passengers'. */

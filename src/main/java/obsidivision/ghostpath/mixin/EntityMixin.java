@@ -32,6 +32,12 @@ public abstract class EntityMixin {
     @Inject(method = "setRemoved", at = @At("HEAD"))
     private void ghostpath$beforeRemoved(Entity.RemovalReason reason, CallbackInfo ci) {
         this.ghostpath$touch();
+        // gaps 7 and 8: UNLOADED_TO_CHUNK (PersistentEntitySectionManager.java:224) and CHANGED_DIMENSION
+        // (Entity.removeAfterChangingDimensions, Entity.java:3175) are logged for chain entities
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onEntityRemoved((Entity) (Object) this, reason);
+        }
     }
 
     private void ghostpath$chainTouch(String why) {

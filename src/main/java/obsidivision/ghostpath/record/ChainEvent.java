@@ -37,7 +37,13 @@ public record ChainEvent(long tick, Kind kind, @Nullable BlockPos pos, String de
          *  "allowed: reason" if the site is on {@link UnseededDrawAllowlist}, else "WARNING: not allowed" (R1) */
         UNSEEDED_DRAW,
         /** entity collision by chain work met a chunk below FULL status: no collision there at all (detail: chunk x,z) */
-        NO_COLLISION_BELOW_FULL
+        NO_COLLISION_BELOW_FULL,
+        /** a chain entity or block entity was unloaded with its chunk; it counts as gone from then on (detail says which) */
+        CHAIN_UNLOADED,
+        /** a chain entity changed dimension; it is not followed any further (portals are out of scope) */
+        LEFT_DIMENSION,
+        /** chain work scheduled a vibration on an entity listener (warden, allay); not followed */
+        VIBRATION_UNTRACKED
     }
 
     @Override
