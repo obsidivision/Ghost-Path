@@ -6,7 +6,8 @@
   "environment": "*",
   "entrypoints": {
     "fabric-client-gametest": [
-      "obsidivision.ghostpath.test.ClientPreviewGameTest"
+      "obsidivision.ghostpath.test.ClientPreviewGameTest",
+      "obsidivision.ghostpath.test.GizmoVisibilityGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",

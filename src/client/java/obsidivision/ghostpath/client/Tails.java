@@ -15,6 +15,7 @@ import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.EntitySpawnRequest;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.storage.TagValueInput;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import obsidivision.ghostpath.preview.PathSnapshot;
@@ -99,7 +100,9 @@ public final class Tails {
             this.xyz.add(p.y);
             this.xyz.add(p.z);
             if (hit != null) {
-                this.endReason = hit == HitResult.Type.BLOCK ? "hit block" : "hit entity";
+                // an arrow that hits a block stays in it (AbstractArrow.onHitBlock sets inGround, :542; the hit effects are off here):
+                // the server's run calls that "stuck"
+                this.endReason = hit == HitResult.Type.BLOCK ? (e instanceof AbstractArrow ? "stuck" : "hit block") : "hit entity";
             } else if (e.isRemoved()) {
                 this.endReason = "removed";
             } else if (p.y < level.getMinY() - 64) {

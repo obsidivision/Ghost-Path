@@ -23,6 +23,8 @@ import org.jspecify.annotations.Nullable;
  * <li>{@code portal}: it was in a portal ({@code Entity.portalProcess != null}); portals are not simulated;</li>
  * <li>{@code hit block} / {@code hit entity}: a projectile's {@code hitTargetOrDeflectSelf} (an arrow that sticks in a block
  *     is not removed, so the hit ends its path);</li>
+ * <li>{@code stuck}: an arrow that stayed in the block it hit for {@code CauseTracker.ARROW_SETTLE_TICKS} ticks (note "stuck" at
+ *     the tick it stuck, which is the hit); an arrow that did not stay ends {@code hit block};</li>
  * <li>{@code settled}: an item on the ground (a vehicle: anywhere) whose position did not change (1e-6) for
  *     {@value #SETTLE_TICKS} ticks in a row (the recorder's item rule);</li>
  * <li>removed: TNT {@code exploded}; a falling block {@code landed}; unloaded with its chunk {@code unloaded};
@@ -33,7 +35,7 @@ import org.jspecify.annotations.Nullable;
 public final class PathBuilder {
     public static final int SETTLE_TICKS = 8;
     public static final double STILL_EPSILON = 1.0E-6;
-    public static final List<String> REASONS = List.of("exploded", "hit block", "hit entity", "landed", "settled", "left dimension", "unloaded", "portal", "limit", "removed");
+    public static final List<String> REASONS = List.of("exploded", "hit block", "hit entity", "stuck", "landed", "settled", "left dimension", "unloaded", "portal", "limit", "removed");
 
     private PathBuilder() {
     }
@@ -96,12 +98,21 @@ public final class PathBuilder {
                 break;
             }
         }
+        long stuckTick = Long.MAX_VALUE;
         for (FlightNote n : notes) {
+            if (n.what().equals("stuck")) {
+                stuckTick = Math.min(stuckTick, n.tick());
+                continue;
+            }
             String r = n.what().equals("hit block") ? "hit block" : n.what().equals("hit entity") ? "hit entity" : removal(kind, n.what());
             if (n.tick() < endTick) {
                 endTick = n.tick();
                 reason = r;
             }
+        }
+        if (stuckTick != Long.MAX_VALUE && stuckTick <= endTick) { // the hit and the stuck are the same tick; an earlier end (portal, removal) wins
+            endTick = stuckTick;
+            reason = "stuck";
         }
         if (kind == FlightKind.ITEM || kind == FlightKind.VEHICLE) {
             int still = 0;

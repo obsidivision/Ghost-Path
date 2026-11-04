@@ -26,6 +26,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
@@ -33,6 +34,7 @@ import net.minecraft.world.level.BlockEventData;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.HopperBlockEntity;
+import obsidivision.ghostpath.mixin.AbstractArrowAccessor;
 import obsidivision.ghostpath.mixin.HopperBlockEntityAccessor;
 import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -162,6 +164,9 @@ public final class CauseTracker {
     /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
     private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
     private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
+    /** Per chain arrow: consecutive ticks it has been stuck in a block, and the recording tick the current stretch began. */
+    private final Map<Entity, Integer> arrowStuckTicks = new IdentityHashMap<>();
+    private final Map<Entity, Long> arrowStuckSince = new IdentityHashMap<>();
     /** Item ticks whose position changed, but by less than {@link #ITEM_STILL_EPSILON}, and so counted as unchanged. */
     private int itemDriftTicks;
     /** Chain entities whose tick is running now, innermost last (passengers tick inside their vehicle's tick). */
@@ -290,6 +295,13 @@ public final class CauseTracker {
      * (two full 4-tick cycles of ItemEntity.java:141). Velocity is ignored: it is never zero for a resting item.
      */
     public static final int ITEM_SETTLE_TICKS = 8;
+    /**
+     * Stuck-arrow rule (ruling after step 5): an arrow ({@code AbstractArrow}) that has been stuck in a block
+     * ({@code isInGround()}, AbstractArrow.java:354) for this many consecutive ticks of its own counts as settled, like an
+     * item: it no longer holds the recording open (it would otherwise stay until it despawns, 1200 ticks,
+     * {@code tickDespawn} :375), and its path ends where it hit, reason "stuck".
+     */
+    public static final int ARROW_SETTLE_TICKS = 8;
     /** A position change below this on every axis counts as unchanged: the friction-decayed x/z drift (about 1e-8). */
     public static final double ITEM_STILL_EPSILON = 1.0E-6;
 
@@ -317,6 +329,9 @@ public final class CauseTracker {
             }
             if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= ITEM_SETTLE_TICKS) {
                 continue;
+            }
+            if (e instanceof AbstractArrow && this.arrowStuckTicks.getOrDefault(e, 0) >= ARROW_SETTLE_TICKS) {
+                continue; // stuck in a block: settled, like an item
             }
             entities++;
         }
@@ -597,6 +612,8 @@ public final class CauseTracker {
             this.chainEntities.remove(entity);
             this.lastItemPos.remove(entity);
             this.itemRestTicks.remove(entity);
+            this.arrowStuckTicks.remove(entity);
+            this.arrowStuckSince.remove(entity);
         }
     }
 
@@ -750,6 +767,20 @@ public final class CauseTracker {
                 this.itemDriftTicks++;
             }
             this.itemRestTicks.put(entity, still && entity.onGround() ? this.itemRestTicks.getOrDefault(entity, 0) + 1 : 0);
+        }
+        if (entity instanceof AbstractArrow arrow) {
+            if (!entity.isRemoved() && ((AbstractArrowAccessor) arrow).ghostpath$isInGround()) {
+                long now = this.level.getGameTime() - this.startTime;
+                this.arrowStuckSince.putIfAbsent(entity, now);
+                int stuck = this.arrowStuckTicks.merge(entity, 1, Integer::sum);
+                if (stuck == ARROW_SETTLE_TICKS && this.traceEntities) {
+                    // the path ends where the arrow stuck (the tick it began), not 8 ticks later
+                    this.flightNotes.add(new FlightNote(this.arrowStuckSince.get(entity), index, "stuck"));
+                }
+            } else {
+                this.arrowStuckTicks.remove(entity);
+                this.arrowStuckSince.remove(entity);
+            }
         }
         String item = entity instanceof ItemEntity ie ? " item=" + ie.getItem().getCount() + " " + BuiltInRegistries.ITEM.getKey(ie.getItem().getItem()) : "";
         this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType()) + item
