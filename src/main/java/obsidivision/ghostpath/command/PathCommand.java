@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -51,6 +51,15 @@ public final class PathCommand {
                     .executes(ctx -> watchStop(ctx.getSource(), null))
                     .then(Commands.argument("pos", BlockPosArgument.blockPos())
                         .executes(ctx -> watchStop(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos"))))))
+            .then(Commands.literal("show")
+                .then(Commands.literal("on").executes(ctx -> show(ctx.getSource(), true)))
+                .then(Commands.literal("off").executes(ctx -> show(ctx.getSource(), false))))
+            .then(Commands.literal("interval")
+                .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 10_000))
+                    .executes(ctx -> interval(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"), 0))
+                    .then(Commands.literal("offset")
+                        .then(Commands.argument("offset", IntegerArgumentType.integer(0, 10_000))
+                            .executes(ctx -> interval(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"), IntegerArgumentType.getInteger(ctx, "offset")))))))
             .then(Commands.literal("limit")
                 .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 1_000_000))
                     .executes(ctx -> limit(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"))))));
@@ -61,6 +70,19 @@ public final class PathCommand {
         source.sendSuccess(() -> Component.literal("TNT kick " + (on ? "on" : "off")
             + (on ? "" : ": drawn and discarded, horizontal part 0 (the upward 0.2 stays)")), false);
         return 1;
+    }
+
+    private static int show(CommandSourceStack source, boolean on) {
+        PathSettings.showPaths = on;
+        source.sendSuccess(() -> Component.literal("Flight paths " + (on ? "shown" : "hidden")), false);
+        return 1;
+    }
+
+    private static int interval(CommandSourceStack source, int ticks, int offset) {
+        PathSettings.dotInterval = ticks;
+        PathSettings.dotOffset = offset;
+        source.sendSuccess(() -> Component.literal("Flight path dots: every " + ticks + " ticks, offset " + offset + " (ticks since the recording began; start and end always)"), false);
+        return ticks;
     }
 
     private static int limit(CommandSourceStack source, int ticks) {

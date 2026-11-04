@@ -48,16 +48,16 @@ public class LiveRerunTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
 
     private static final BlockPos S0 = new BlockPos(0, 2, 2);
-    private static final BlockPos LEVER = new BlockPos(0, 3, 2);
-    private static final BlockPos P2 = new BlockPos(0, 2, 3);
-    private static final BlockPos C = new BlockPos(1, 2, 3);
-    private static final BlockPos TNT = new BlockPos(1, 2, 5);
-    private static final BlockPos P1 = new BlockPos(2, 2, 3);
-    private static final List<BlockPos> CORNERS = List.of(new BlockPos(-6, 2, -6), new BlockPos(20, 2, -6), new BlockPos(-6, 2, 12), new BlockPos(20, 2, 12), new BlockPos(2, 2, 2));
+    static final BlockPos LEVER = new BlockPos(0, 3, 2);
+    static final BlockPos P2 = new BlockPos(0, 2, 3);
+    static final BlockPos C = new BlockPos(1, 2, 3);
+    static final BlockPos TNT = new BlockPos(1, 2, 5);
+    static final BlockPos P1 = new BlockPos(2, 2, 3);
+    static final List<BlockPos> CORNERS = List.of(new BlockPos(-6, 2, -6), new BlockPos(20, 2, -6), new BlockPos(-6, 2, 12), new BlockPos(20, 2, 12), new BlockPos(2, 2, 2));
 
     // ---- helpers ----
 
-    private static void build(GameTestHelper helper) {
+    static void build(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
         for (int x = -1; x <= 8; x++) {
@@ -74,11 +74,11 @@ public class LiveRerunTest {
         helper.setBlock(TNT, Blocks.TNT);
     }
 
-    private static void placeP2(GameTestHelper helper) {
+    static void placeP2(GameTestHelper helper) {
         helper.setBlock(P2, Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
     }
 
-    private static void whenTicking(GameTestHelper helper, List<BlockPos> rel, Runnable then, int waited) {
+    static void whenTicking(GameTestHelper helper, List<BlockPos> rel, Runnable then, int waited) {
         boolean ready = true;
         for (BlockPos r : rel) {
             ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(r));
@@ -93,7 +93,7 @@ public class LiveRerunTest {
     }
 
     /** Polls once per tick until {@code cond}; {@code each} runs every tick before the check; {@code then} runs once. */
-    private static void waitFor(GameTestHelper helper, String what, int limit, Runnable each, BooleanSupplier cond, Runnable then) {
+    static void waitFor(GameTestHelper helper, String what, int limit, Runnable each, BooleanSupplier cond, Runnable then) {
         Runnable once = TestSupport.once(then);
         poll(helper, what, limit, each, cond, once, 0);
     }
@@ -115,7 +115,7 @@ public class LiveRerunTest {
         }
     }
 
-    private static final class Capture implements net.minecraft.commands.CommandSource {
+    static final class Capture implements net.minecraft.commands.CommandSource {
         final List<String> lines = new ArrayList<>();
 
         @Override
@@ -143,7 +143,7 @@ public class LiveRerunTest {
         }
     }
 
-    private static void command(ServerLevel level, Capture capture, String command) {
+    static void command(ServerLevel level, Capture capture, String command) {
         CommandSourceStack source = level.getServer().createCommandSourceStack().withSource(capture).withLevel(level).withPermission(LevelBasedPermissionSet.GAMEMASTER);
         level.getServer().getCommands().performPrefixedCommand(source, command);
     }
@@ -170,7 +170,11 @@ public class LiveRerunTest {
 
     /** Runs {@code /path machine} on the lever and hands over the recording and the watch once the recording is over. */
     private static void recordAndWatch(GameTestHelper helper, ServerLevel level, Capture capture, java.util.function.BiConsumer<Recording, Watched> then) {
-        BlockPos lever = helper.absolutePos(LEVER);
+        recordAndWatch(helper, level, capture, LEVER, then);
+    }
+
+    static void recordAndWatch(GameTestHelper helper, ServerLevel level, Capture capture, BlockPos relLever, java.util.function.BiConsumer<Recording, Watched> then) {
+        BlockPos lever = helper.absolutePos(relLever);
         PathSettings.kick = true;
         PathSettings.tickLimit = PathSettings.DEFAULT_TICK_LIMIT;
         PathSettings.watchAfterMachine = true;
@@ -188,7 +192,7 @@ public class LiveRerunTest {
         });
     }
 
-    private static void finish(GameTestHelper helper) {
+    static void finish(GameTestHelper helper) {
         LiveWatch.stopAll();
         PathSettings.rerunBudgetMs = 10;
         PathSettings.watchAfterMachine = false;
@@ -249,7 +253,7 @@ public class LiveRerunTest {
                         helper.assertTrue(p.trace().stream().anyMatch(t -> t.type().equals("minecraft:tnt")), "no TNT state in the prediction");
                         String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse(null);
                         LOG.info("[ghostpath] chat: {}", line);
-                        helper.assertTrue(line != null && line.contains(p.ticks() + " ticks, 1 TNT spawned, changed since last: ")
+                        helper.assertTrue(line != null && line.contains(p.ticks() + " ticks, 1 TNT spawned") && line.contains("(ghost created in ") && line.contains(", changed since last: ")
                             && line.contains("TNT #0 spawn t+" + before.getFirst() + " -> t+" + after), "chat line: " + line);
                         helper.assertTrue(watch.footprint() != oldFootprint && watch.footprint() == p.footprint() && watch.footprint().containsPosition(p2),
                             "the footprint was not replaced by the rerun's");

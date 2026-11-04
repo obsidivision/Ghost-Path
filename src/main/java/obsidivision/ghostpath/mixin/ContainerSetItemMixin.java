@@ -36,5 +36,13 @@ public abstract class ContainerSetItemMixin {
         if (log != null) {
             log.onBlockEntityAccess((BlockEntity) (Object) this);
         }
+        // live rerun (step 4, ruling 2): a content change in a watched machine's block entity. setItem(slot, same empty) is no change;
+        // anything else is (a stack changed in place and set again would not compare as different)
+        if (obsidivision.ghostpath.watch.LiveWatch.active()) {
+            net.minecraft.world.Container self = (net.minecraft.world.Container) this;
+            if (!(stack.isEmpty() && self.getItem(slot).isEmpty())) {
+                obsidivision.ghostpath.watch.LiveWatch.onContentsChanged((BlockEntity) (Object) this);
+            }
+        }
     }
 }

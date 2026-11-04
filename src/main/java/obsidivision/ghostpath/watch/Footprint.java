@@ -110,6 +110,47 @@ public final class Footprint {
         return false;
     }
 
+    /**
+     * Whether an entity with this bounding box is "in" the footprint (step 4, ruling 3): its box intersects an entity area, or
+     * overlaps a footprint block position (boxes of more than 512 blocks only count by the block at their centre).
+     */
+    public boolean touchesEntity(AABB bb) {
+        int x0 = (int) Math.floor(bb.minX);
+        int x1 = (int) Math.floor(bb.maxX);
+        int y0 = (int) Math.floor(bb.minY);
+        int y1 = (int) Math.floor(bb.maxY);
+        int z0 = (int) Math.floor(bb.minZ);
+        int z1 = (int) Math.floor(bb.maxZ);
+        for (int cx = x0 >> 4; cx <= x1 >> 4; cx++) {
+            for (int cz = z0 >> 4; cz <= z1 >> 4; cz++) {
+                List<AABB> boxes = this.areasByChunk.get(ChunkPos.pack(cx, cz));
+                if (boxes != null) {
+                    for (AABB a : boxes) {
+                        if (a.intersects(bb)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        long volume = (long) (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+        if (volume > 512) {
+            BlockPos c = BlockPos.containing(bb.getCenter());
+            return this.positionKeys.contains(c.asLong());
+        }
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int x = x0; x <= x1; x++) {
+            for (int y = y0; y <= y1; y++) {
+                for (int z = z0; z <= z1; z++) {
+                    if (this.positionKeys.contains(m.set(x, y, z).asLong())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     @Override
     public String toString() {
         return this.positions.size() + " positions, " + this.columns.size() + " columns, " + this.areas.size() + " areas in " + this.chunks.size() + " chunks";

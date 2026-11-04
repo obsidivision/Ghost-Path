@@ -46,6 +46,7 @@
     "MinecraftServerLookupMixin",
     "MinecraftServerSaveMixin",
     "PrimedTntMixin",
+    "ProjectileHitMixin",
     "ServerExplosionMixin",
     "ServerLevelAccessor",
     "ServerLevelMixin",

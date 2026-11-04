@@ -28,5 +28,9 @@ public abstract class ContainerRemoveItemNoUpdateMixin {
         if (log != null) {
             log.onBlockEntityAccess((BlockEntity) (Object) this);
         }
+        // live rerun (step 4, ruling 2): taking out of a non-empty slot is a content change
+        if (obsidivision.ghostpath.watch.LiveWatch.active() && !((net.minecraft.world.Container) this).getItem(slot).isEmpty()) {
+            obsidivision.ghostpath.watch.LiveWatch.onContentsChanged((BlockEntity) (Object) this);
+        }
     }
 }

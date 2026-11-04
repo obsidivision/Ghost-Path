@@ -7,6 +7,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.ButtonBlock;
+import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.ghost.GhostCopy;
 import obsidivision.ghostpath.ghost.GhostLevel;
@@ -46,6 +50,8 @@ final class Rerun {
     private final long createdNanos = System.nanoTime();
     private long workNanos;
     private long copyNanos;
+    private long createNanos;
+    private @Nullable String triggerNote;
     private boolean running;
     private long maxSliceNanos;
     private final int minTicks;
@@ -64,6 +70,7 @@ final class Rerun {
         long t0 = System.nanoTime();
         GhostLevel.resetStrayPackets();
         this.ghost = GhostLevel.create(real);
+        this.createNanos = System.nanoTime() - t0;
         try {
             Recording rec = watch.recording();
             this.prepared = GhostCopy.prepare(real, this.ghost, min, max,
@@ -98,6 +105,7 @@ final class Rerun {
                 long copyStart = System.nanoTime();
                 this.prepared.finish();
                 Recording rec = this.watch.recording();
+                this.triggerNote = this.prepareTrigger(rec);
                 CauseTracker t = CauseTracker.begin(this.ghost, rec.seed(), rec.kickApplied());
                 this.tracker = t;
                 try {
@@ -137,6 +145,52 @@ final class Rerun {
         }
     }
 
+    /**
+     * Ruling 1 after step 4: the rerun predicts the same press as the recording. The ghost's trigger is set to the state the
+     * recording found it in, <b>without updates</b> (neighbours are not told: they stay as copied), and then pressed. When
+     * the real trigger is in another state (a lever the player pulled since) the chat line says so. Done before the cause
+     * tracker starts, so it is neither chain work nor part of the footprint.
+     */
+    private @Nullable String prepareTrigger(Recording rec) {
+        BlockPos pos = rec.trigger();
+        BlockState wanted = rec.triggerStateAtStart();
+        BlockState real = this.real.getBlockState(pos);
+        BlockState inGhost = this.ghost.getBlockState(pos);
+        if (!inGhost.equals(wanted)) {
+            this.ghost.setBlock(pos, wanted, NO_UPDATES);
+        }
+        if (real.equals(wanted)) {
+            return null;
+        }
+        return "real " + describe(real, wanted) + "; prediction is for " + after(wanted);
+    }
+
+    /** Flags for putting the trigger back: clients only (the ghost has none), no neighbour update, no shape update, no block-entity or on-place side effects. */
+    static final int NO_UPDATES = Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE | Block.UPDATE_SUPPRESS_DROPS
+        | Block.UPDATE_SKIP_BLOCK_ENTITY_SIDEEFFECTS | Block.UPDATE_SKIP_ON_PLACE;
+
+    private static String describe(BlockState real, BlockState wanted) {
+        if (!real.is(wanted.getBlock())) {
+            return "trigger is now " + real.getBlock().getName().getString();
+        }
+        return wanted.getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " is " + state(real, wanted);
+    }
+
+    private static String state(BlockState s, BlockState like) {
+        if (like.getBlock() instanceof LeverBlock) {
+            return s.getValue(LeverBlock.POWERED) ? "on" : "off";
+        }
+        return s.getValue(ButtonBlock.POWERED) ? "pressed" : "not pressed";
+    }
+
+    private static String after(BlockState before) {
+        if (before.getBlock() instanceof LeverBlock) {
+            boolean on = before.getValue(LeverBlock.POWERED);
+            return (on ? "on" : "off") + " \u2192 " + (on ? "off" : "on");
+        }
+        return "not pressed \u2192 pressed";
+    }
+
     private void finish(CauseTracker t) {
         boolean limitHit = this.ticksRun >= this.limit && t.pending().any();
         List<ChunkPos> beyond = new ArrayList<>();
@@ -152,7 +206,8 @@ final class Rerun {
         this.result = new Prediction(this.ticksRun, limitHit, t.addedChainEntities(EntityTypes.TNT),
             Prediction.tntSpawnTicks(t.events(), t.entityTrace()), List.copyOf(t.events()), List.copyOf(t.entityTrace()), fp, t.pending(),
             this.min, this.max, this.widened, List.copyOf(beyond), gaps, this.serverTicks, this.workNanos / 1_000_000L,
-            this.copyNanos / 1_000_000L, this.maxSliceNanos / 1_000_000L);
+            this.copyNanos / 1_000_000L, this.maxSliceNanos / 1_000_000L, this.createNanos / 1_000_000L, this.triggerNote,
+            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles());
         this.finished = true;
         this.discard();
     }

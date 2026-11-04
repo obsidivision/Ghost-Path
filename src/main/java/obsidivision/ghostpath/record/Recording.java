@@ -45,6 +45,10 @@ import net.minecraft.world.phys.AABB;
  * @param clocksAtStart   the world clocks (day time) when the trigger was pressed (step 3: the ghost starts from them)
  * @param entityTrace     every chain entity's full state after each of its ticks (step 3)
  * @param readFirstTicks  the relative tick at which each read position was first read
+ * @param triggerStateAtStart the trigger's block state just before it was pressed (step 4 ruling: a rerun presses the same press)
+ * @param flightPoints    every chain entity's position per tick, as numbers (step 5)
+ * @param flightNotes     hits and removals of chain entities (step 5)
+ * @param liveProjectiles chain projectiles still flying when the recording ended (tick limit), saved for the client's continuation (step 5)
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -80,11 +84,17 @@ public record Recording(
     List<String> notFollowed,
     net.minecraft.world.clock.PackedClockStates clocksAtStart,
     List<CauseTracker.EntityTrace> entityTrace,
-    Map<BlockPos, Long> readFirstTicks
+    Map<BlockPos, Long> readFirstTicks,
+    net.minecraft.world.level.block.state.BlockState triggerStateAtStart,
+    List<CauseTracker.FlightPoint> flightPoints,
+    List<CauseTracker.FlightNote> flightNotes,
+    List<CauseTracker.LiveEntity> liveProjectiles
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
-                        Weather weatherAtEnd, int chunksReloaded, net.minecraft.world.clock.PackedClockStates clocksAtStart) {
+                        Weather weatherAtEnd, int chunksReloaded, net.minecraft.world.clock.PackedClockStates clocksAtStart,
+                        net.minecraft.world.level.block.state.BlockState triggerStateAtStart,
+                        List<CauseTracker.LiveEntity> liveProjectiles) {
         int notAllowed = 0;
         int allowed = 0;
         int inexact = 0;
@@ -115,7 +125,8 @@ public record Recording(
             weatherAtStart, weatherAtEnd, chunksReloaded, undo.entitiesNotRestored(), tracker.itemDriftTicks(),
             undo.sharedRestored(), undo.nonChainBlocksLeft(), undo.nonChainEntitiesLeft(),
             tracker.notFollowed().stream().map(ChainEvent::toString).toList(),
-            clocksAtStart, List.copyOf(tracker.entityTrace()), Map.copyOf(tracker.readFirstTicks()));
+            clocksAtStart, List.copyOf(tracker.entityTrace()), Map.copyOf(tracker.readFirstTicks()), triggerStateAtStart,
+            List.copyOf(tracker.flightPoints()), List.copyOf(tracker.flightNotes()), List.copyOf(liveProjectiles));
     }
 
     /** Block positions read or written: the footprint without entity areas. */

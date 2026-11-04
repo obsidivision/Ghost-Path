@@ -127,10 +127,13 @@ public class MachineCommandTest {
         weather.setRaining(true);
         weather.setRainTime(1_000_000);
         level.setRainLevel(1.0F);
+        float wasThunderLevel = level.getThunderLevel(1.0F);
+        level.setThunderLevel(1.0F); // pinned like the rain level: a thunder level still ramping up differs between two recordings (seen: 0.41 vs 1.0)
         restoreWeather = () -> {
             weather.setRaining(wasRaining);
             weather.setRainTime(wasRainTime);
             level.setRainLevel(wasRainLevel);
+            level.setThunderLevel(wasThunderLevel);
         };
         CauseTrackingTest.buildMachine(helper, BlockPos.ZERO, true);
         BlockPos lever = helper.absolutePos(CauseTrackingTest.trigger());

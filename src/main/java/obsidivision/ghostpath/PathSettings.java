@@ -19,6 +19,16 @@ public final class PathSettings {
      */
     public static volatile boolean watchAfterMachine = true;
 
+    /**
+     * Flight preview (step 5), read by the client in singleplayer (same JVM as the built-in server): whether the paths are
+     * drawn ({@code /path show on|off}, the toggle key).
+     */
+    public static volatile boolean showPaths = true;
+    /** {@code /path interval <ticks> [offset <n>]}: a dot every this many ticks (ticks since the recording began), start and end always. */
+    public static volatile int dotInterval = 5;
+    /** The dots sit at ticks where (tick - offset) is a multiple of the interval. */
+    public static volatile int dotOffset = 0;
+
     private PathSettings() {
     }
 }

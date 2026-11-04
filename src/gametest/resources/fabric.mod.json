@@ -18,7 +18,9 @@
       "obsidivision.ghostpath.test.RecordingRulesTest",
       "obsidivision.ghostpath.test.GhostTest",
       "obsidivision.ghostpath.test.GhostCheckTest",
-      "obsidivision.ghostpath.test.LiveRerunTest"
+      "obsidivision.ghostpath.test.LiveRerunTest",
+      "obsidivision.ghostpath.test.LiveRerunRulingsTest",
+      "obsidivision.ghostpath.test.FlightPreviewTest"
     ]
   },
   "depends": {

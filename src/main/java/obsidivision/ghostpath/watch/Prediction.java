@@ -35,12 +35,18 @@ import obsidivision.ghostpath.record.Recording;
  * @param serverTicks     server ticks the run was spread over
  * @param millis          server-thread time the run took in total
  * @param copyMillis      of which the copy (the one slice that cannot be split: one consistent moment of the real world)
+ * @param createMillis    of which creating the (empty) ghost level; not budgeted, logged in the chat line (ruling 4 after step 4)
+ * @param triggerNote     the real trigger is not in the state the recording found it in: "real lever is on; prediction is for off → on"; or null
+ * @param flightPoints    every chain entity's position per tick, as numbers (step 5)
+ * @param flightNotes     hits and removals of chain entities (step 5)
+ * @param liveProjectiles chain projectiles still flying when the run stopped at the tick limit (step 5)
  * @param maxSliceMillis  the longest slice of ghost ticks, copy excluded (the budget is checked after each ghost tick)
  */
 public record Prediction(int ticks, boolean limitHit, int tntSpawned, List<Integer> tntSpawnTicks, List<ChainEvent> events,
                          List<CauseTracker.EntityTrace> trace, Footprint footprint, CauseTracker.Pending pendingAtEnd, ChunkPos copiedMin,
                          ChunkPos copiedMax, boolean widened, List<ChunkPos> beyond, List<String> gaps, int serverTicks, long millis, long copyMillis,
-                         long maxSliceMillis) {
+                         long maxSliceMillis, long createMillis, String triggerNote, List<CauseTracker.FlightPoint> flightPoints,
+                         List<CauseTracker.FlightNote> flightNotes, List<CauseTracker.LiveEntity> liveProjectiles) {
 
     /** The chain entity states of one tick, in the order the ghost ticked them. */
     public List<CauseTracker.EntityTrace> statesAt(long tick) {

@@ -131,6 +131,9 @@ public final class CauseTracker {
     /** Step 3: record every chain entity's full state after each of its ticks ({@link #entityTrace()}). */
     private boolean traceEntities;
     private final List<EntityTrace> trace = new ArrayList<>();
+    /** Step 5: every chain entity's position and velocity per tick as numbers (and what ended it), for the flight preview. */
+    private final List<FlightPoint> flightPoints = new ArrayList<>();
+    private final List<FlightNote> flightNotes = new ArrayList<>();
     /** Game tick (relative) at which each position was first read by chain work. */
     private final Map<BlockPos, Long> readFirstTick = new HashMap<>();
     /** Gaps the ghost run hit (ruling 3 of step 3); never in the event log, so real and ghost logs stay comparable. */
@@ -584,6 +587,9 @@ public final class CauseTracker {
             return;
         }
         String what = "#" + index + " " + EntityType.getKey(entity.getType());
+        if (this.traceEntities) {
+            this.flightNotes.add(new FlightNote(this.level.getGameTime() - this.startTime, index, "removed " + reason.name()));
+        }
         if (reason == Entity.RemovalReason.UNLOADED_TO_CHUNK) {
             this.log(ChainEvent.Kind.CHAIN_UNLOADED, entity.blockPosition(), "chain entity unloaded " + what + " pos=" + entity.position());
         } else if (reason == Entity.RemovalReason.CHANGED_DIMENSION) {
@@ -710,6 +716,9 @@ public final class CauseTracker {
     public void onEntityAdded(Entity entity) {
         if (this.chainEntities.containsKey(entity)) {
             this.addedChainEntities.add(entity);
+            if (this.traceEntities) {
+                this.addFlightPoint(entity, this.chainEntities.get(entity)); // where it starts, before its first tick
+            }
         }
     }
 
@@ -747,9 +756,90 @@ public final class CauseTracker {
             + " pos=(" + p.x + ", " + p.y + ", " + p.z + ") v=(" + v.x + ", " + v.y + ", " + v.z + ")"
             + (entity.isRemoved() ? " removed" : ""));
         if (this.traceEntities) {
+            this.addFlightPoint(entity, index);
             this.trace.add(new EntityTrace(this.events.size(), this.level.getGameTime() - this.startTime, this.phase, index,
                 EntityType.getKey(entity.getType()).toString(), exactState(entity)));
         }
+    }
+
+    // ---- step 5: flight points ----
+
+    /** What kind of chain entity a path belongs to (the flight preview draws these; everything else is {@code OTHER}). */
+    public enum FlightKind {
+        TNT, PROJECTILE, ITEM, FALLING_BLOCK, VEHICLE, OTHER;
+
+        public static FlightKind of(Entity e) {
+            if (e instanceof PrimedTnt) {
+                return TNT;
+            } else if (e instanceof Projectile) {
+                return PROJECTILE;
+            } else if (e instanceof ItemEntity) {
+                return ITEM;
+            } else if (e instanceof FallingBlockEntity) {
+                return FALLING_BLOCK;
+            } else if (e instanceof VehicleEntity) {
+                return VEHICLE;
+            }
+            return OTHER;
+        }
+    }
+
+    /**
+     * One chain entity at one tick: after its own tick (or, for the first point of an entity, where it was added). Exact
+     * doubles. {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
+     */
+    public record FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
+                              boolean onGround, boolean removed, boolean portal) {
+    }
+
+    /** Why a chain entity's path ended or what it hit: "hit block", "hit entity" (projectiles), "removed KILLED", "removed UNLOADED_TO_CHUNK", ... */
+    public record FlightNote(long tick, int index, String what) {
+    }
+
+    private void addFlightPoint(Entity e, int index) {
+        Vec3 p = e.position();
+        Vec3 v = e.getDeltaMovement();
+        this.flightPoints.add(new FlightPoint(this.level.getGameTime() - this.startTime, index, EntityType.getKey(e.getType()).toString(), FlightKind.of(e),
+            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null));
+    }
+
+    /** {@code Projectile.hitTargetOrDeflectSelf}, before it runs: a chain projectile hit a block or an entity. */
+    public void onProjectileHit(Projectile projectile, net.minecraft.world.phys.HitResult.Type type) {
+        Integer index = this.chainEntities.get(projectile);
+        if (this.traceEntities && index != null && projectile.level() == this.level) {
+            this.flightNotes.add(new FlightNote(this.level.getGameTime() - this.startTime, index, type == net.minecraft.world.phys.HitResult.Type.BLOCK ? "hit block" : "hit entity"));
+        }
+    }
+
+    /** A chain projectile still in the level: its saved data and what the save does not hold, for the client to continue its flight. */
+    public record LiveEntity(int index, String type, CompoundTag nbt, int tickCount, double xo, double yo, double zo, boolean onGround) {
+    }
+
+    /**
+     * The chain projectiles that are still in the level now (run stopped at the tick limit with them flying): index, saved
+     * data, previous position, tick count. Call before the tracker ends and before the restore or the ghost's discard.
+     */
+    public List<LiveEntity> captureLiveProjectiles() {
+        List<LiveEntity> out = new ArrayList<>();
+        for (Map.Entry<Entity, Integer> en : this.chainEntities.entrySet()) {
+            Entity e = en.getKey();
+            if (e instanceof Projectile && !e.isRemoved() && this.level.getEntity(e.getId()) == e) {
+                TagValueOutput tag = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, this.level.registryAccess());
+                e.saveWithoutId(tag);
+                out.add(new LiveEntity(en.getValue(), EntityType.getKey(e.getType()).toString(), tag.buildResult(), e.tickCount, e.xo, e.yo, e.zo, e.onGround()));
+            }
+        }
+        out.sort(java.util.Comparator.comparingInt(LiveEntity::index));
+        return out;
+    }
+
+    /** Every chain entity's position per tick (empty unless {@link #enableEntityTrace()} was called). */
+    public List<FlightPoint> flightPoints() {
+        return Collections.unmodifiableList(this.flightPoints);
+    }
+
+    public List<FlightNote> flightNotes() {
+        return Collections.unmodifiableList(this.flightNotes);
     }
 
     // ---- step 3: phase, entity trace, gaps ----

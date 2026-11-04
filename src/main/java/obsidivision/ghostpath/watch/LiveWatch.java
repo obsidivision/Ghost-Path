@@ -132,7 +132,7 @@ public final class LiveWatch {
             if (p != null) {
                 out.add("   last rerun: " + p.ticks() + " ticks, " + p.tntSpawned() + " TNT" + (p.tntSpawnTicks().isEmpty() ? "" : " (spawn t+"
                     + p.tntSpawnTicks().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", t+")) + ")")
-                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (copy " + p.copyMillis() + " ms, longest slice "
+                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (ghost created " + p.createMillis() + " ms, copy " + p.copyMillis() + " ms, longest slice "
                     + p.maxSliceMillis() + " ms, budget " + PathSettings.rerunBudgetMs + " ms)");
             }
         }
@@ -151,18 +151,44 @@ public final class LiveWatch {
      * Ignored while a recording runs: its chain and its restore write the footprint.
      */
     public static void onBlockChanged(ServerLevel level, BlockPos pos) {
-        if (WATCHES.isEmpty() || MachineRecorder.current() != null || UndoLog.active() != null) {
+        if (ignoring()) {
             return;
         }
         for (Watched w : WATCHES) {
             if (level.dimension().equals(w.recording().dimension()) && w.footprint.hit(pos)) {
-                w.dirty = true;
-                w.lastChange = serverTick;
-                w.changes++;
-                if (run != null && run.watch == w) {
-                    cancelRun();
-                }
+                markChanged(w);
             }
+        }
+    }
+
+    /**
+     * The contents of a container block entity changed ({@code setItem}, {@code removeItem}, {@code removeItemNoUpdate}, called
+     * before the change; ruling 2 after step 4: TNT in a dispenser, items in a dropper or hopper matter). Counts when the
+     * block entity's position is a footprint position. The ghost's block entities carry another dimension key.
+     */
+    public static void onContentsChanged(net.minecraft.world.level.block.entity.BlockEntity be) {
+        if (ignoring() || !(be.getLevel() instanceof ServerLevel level)) {
+            return;
+        }
+        BlockPos pos = be.getBlockPos();
+        for (Watched w : WATCHES) {
+            if (level.dimension().equals(w.recording().dimension()) && w.footprint.containsPosition(pos)) {
+                markChanged(w);
+            }
+        }
+    }
+
+    /** Nothing is noticed while a recording runs: its chain and its restore write the footprint. */
+    private static boolean ignoring() {
+        return WATCHES.isEmpty() || MachineRecorder.current() != null || UndoLog.active() != null;
+    }
+
+    private static void markChanged(Watched w) {
+        w.dirty = true;
+        w.lastChange = serverTick;
+        w.changes++;
+        if (run != null && run.watch == w) {
+            cancelRun();
         }
     }
 
@@ -197,6 +223,7 @@ public final class LiveWatch {
         if (WATCHES.isEmpty()) {
             return;
         }
+        scanEntities(server);
         if (run != null) {
             if (MachineRecorder.current() != null) {
                 cancelRun();
@@ -244,6 +271,21 @@ public final class LiveWatch {
             }
             start(w, level, rect, false);
             return;
+        }
+    }
+
+    /** Ruling 3: real entities added to, removed from or settling at a new place in a footprint count as a change. */
+    private static void scanEntities(MinecraftServer server) {
+        for (Watched w : List.copyOf(WATCHES)) {
+            if (MachineRecorder.current() != null) {
+                w.entities.invalidate(); // a recording spawns and removes entities in the same places
+                continue;
+            }
+            ServerLevel level = server.getLevel(w.recording().dimension());
+            if (level != null && w.entities.scan(level, w.footprint)) {
+                w.entityChanges++;
+                markChanged(w);
+            }
         }
     }
 
@@ -296,6 +338,10 @@ public final class LiveWatch {
         if (!p.beyond().isEmpty()) {
             line.append(" (the chain reaches beyond the copied chunks, ").append(p.beyond().size()).append(" chunks not copied: the prediction may be wrong)");
         }
+        line.append(" (ghost created in ").append(p.createMillis()).append(" ms)");
+        if (p.triggerNote() != null) {
+            line.append(" (").append(p.triggerNote()).append(")");
+        }
         line.append(", changed since last: ");
         if (changes.isEmpty()) {
             line.append("nothing");
@@ -308,8 +354,11 @@ public final class LiveWatch {
         w.last = Prediction.Summary.of(p);
         w.latest = p;
         w.footprint = p.footprint();
+        w.entities.invalidate(); // the footprint is another one now: entities "entering" it are not changes
         w.lastRect = new int[] {p.copiedMin().x(), p.copiedMin().z(), p.copiedMax().x(), p.copiedMax().z()};
         w.reruns++;
+        // step 5: the flight preview shows this prediction (built from copies, the ghost is gone: Rerun.finish discarded it)
+        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString()));
         w.status = w.dirty ? "changed again, waiting for quiet" : "idle";
         w.chat.accept(line.toString());
     }

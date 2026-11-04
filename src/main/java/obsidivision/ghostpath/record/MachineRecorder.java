@@ -105,7 +105,7 @@ public final class MachineRecorder {
             saves.end(false);
             throw e;
         }
-        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather, clocks);
+        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather, clocks, state);
         current = recorder;
         try {
             tracker.enableEntityTrace();
@@ -154,6 +154,8 @@ public final class MachineRecorder {
     private final long startTime;
     private final SaveGuard saves;
     private final Weather weatherAtStart;
+    /** The trigger's state before the press (a rerun sets it back before pressing, ruling 1 after step 4). */
+    private final BlockState triggerState;
     private final net.minecraft.world.clock.PackedClockStates clocksAtStart;
     private int serverTicks;
     // set when the recording part is over and the restore waits for chunks
@@ -167,10 +169,12 @@ public final class MachineRecorder {
     private boolean endLimitHit;
     private CauseTracker.@org.jspecify.annotations.Nullable Pending endPending;
     private @org.jspecify.annotations.Nullable Weather weatherAtEnd;
+    private java.util.List<CauseTracker.LiveEntity> liveProjectiles = java.util.List.of();
 
     private MachineRecorder(ServerLevel level, BlockPos trigger, int limit, boolean kick, Listener listener, UndoLog undo,
                             CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart,
-                            net.minecraft.world.clock.PackedClockStates clocksAtStart) {
+                            net.minecraft.world.clock.PackedClockStates clocksAtStart, BlockState triggerState) {
+        this.triggerState = triggerState;
         this.saves = saves;
         this.clocksAtStart = clocksAtStart;
         this.weatherAtStart = weatherAtStart;
@@ -217,6 +221,7 @@ public final class MachineRecorder {
         this.endLimitHit = limitHit;
         this.endPending = pending;
         this.weatherAtEnd = Weather.of(this.level);
+        this.liveProjectiles = this.tracker.captureLiveProjectiles(); // before the restore removes them
         this.tracker.end();
         this.scope = this.tracker.restoreScope();
         this.restoreChunks = this.undo.chunksToLoad(this.scope);
@@ -244,7 +249,7 @@ public final class MachineRecorder {
         try {
             this.undo.restore(this.scope);
             recording = Recording.of(this.tracker, this.undo, this.trigger, this.endTicks, this.limit, this.endLimitHit, this.endPending, this.kick,
-                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size(), this.clocksAtStart);
+                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size(), this.clocksAtStart, this.triggerState, this.liveProjectiles);
         } catch (RuntimeException e) {
             current = null;
             this.removeRestoreTickets();
@@ -257,6 +262,8 @@ public final class MachineRecorder {
         this.removeRestoreTickets();
         this.saves.end(true);
         RecordingStore.set(recording);
+        // step 5: the flight preview shows the real run (copied now, on the server thread)
+        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording));
         this.listener.done(recording);
     }
 

@@ -29,6 +29,9 @@ public final class Watched {
     int failures;
     int widenings;
     String status = "idle";
+    final EntityWatch entities = new EntityWatch();
+    /** Entity changes counted (added, removed, settled at a new position); see {@link EntityWatch}. */
+    int entityChanges;
 
     Watched(Recording recording, Consumer<String> chat) {
         this.recording = recording;
@@ -81,6 +84,26 @@ public final class Watched {
     /** Footprint changes seen since the watch started. */
     public int changes() {
         return this.changes;
+    }
+
+    /** Real entity changes at the footprint that were counted as footprint changes. */
+    public int entityChanges() {
+        return this.entityChanges;
+    }
+
+    /** Real entities added to the footprint (not counting the first look). */
+    public int entitiesAdded() {
+        return this.entities.added();
+    }
+
+    /** Real entities removed from the footprint. */
+    public int entitiesRemoved() {
+        return this.entities.removed();
+    }
+
+    /** Real entities that came to rest at a new place in the footprint. */
+    public int entitiesSettled() {
+        return this.entities.settled();
     }
 
     public String status() {

@@ -8,9 +8,13 @@
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
-    "main": ["obsidivision.ghostpath.GhostPath"]
+    "main": ["obsidivision.ghostpath.GhostPath"],
+    "client": ["obsidivision.ghostpath.client.GhostPathClient"]
   },
-  "mixins": ["ghostpath.mixins.json"],
+  "mixins": [
+    "ghostpath.mixins.json",
+    { "config": "ghostpath.client.mixins.json", "environment": "client" }
+  ],
   "depends": {
     "fabricloader": ">=0.20.1",
     "minecraft": "~26.2",
