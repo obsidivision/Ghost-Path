@@ -47,3 +47,10 @@ java {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
+
+// ./gradlew runGameTest -PgtFilter=<regex>  runs only the game tests whose id matches (Fabric's fabric-api.gametest.filter)
+tasks.matching { it.name == 'runGameTest' }.configureEach {
+    if (project.hasProperty('gtFilter')) {
+        systemProperty 'fabric-api.gametest.filter', project.property('gtFilter')
+    }
+}

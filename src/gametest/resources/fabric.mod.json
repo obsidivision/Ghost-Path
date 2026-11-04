@@ -30,7 +30,8 @@
       "obsidivision.ghostpath.test.FlightPreviewTest",
       "obsidivision.ghostpath.test.InspectorTest",
       "obsidivision.ghostpath.test.DustDuperTest",
-      "obsidivision.ghostpath.test.GhostDiskTest"
+      "obsidivision.ghostpath.test.GhostDiskTest",
+      "obsidivision.ghostpath.test.GhostDiskTicksTest"
     ]
   },
   "depends": {

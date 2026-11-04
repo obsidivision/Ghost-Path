@@ -287,6 +287,11 @@ public final class GhostCopy {
             throw new IllegalStateException("ghost copy: the ghost is not empty (one copy per ghost)");
         }
         if (!disk.isEmpty()) {
+            // A saved scheduled tick stores its delay relative to the save (SavedTick.java:12 "delay", ScheduledTick.toSavedTick), and
+            // the chunk turns it into a trigger tick with the level's game time at the moment it loads (ServerLevel.java:1751
+            // levelChunk.unpackTicks(getGameTime())). A real chunk loaded now would get "now + delay"; so the ghost's game time is the
+            // start time before its chunks load, and the saved ticks come out as start + delay: the same remaining delay, no shift.
+            ghost.ghostData().setGameTime(start.gameTime() != null ? start.gameTime() : real.getGameTime());
             writeSavedChunks(real, ghost, chunks, disk);
         }
         return new Prepared(real, ghost, chunks, addTickets(real, ghost, chunks, disk), start, disk);
@@ -335,7 +340,7 @@ public final class GhostCopy {
         checkRealLoaded(real, chunks);
         // the ghost's game time is the one asked for (the recording's start); every absolute game time taken from the real
         // level moves by the same difference, so remaining delays and "ticked this game tick" comparisons are kept
-        long gameTime = start.gameTime() != null ? start.gameTime() : real.getGameTime();
+        long gameTime = start.gameTime() != null ? start.gameTime() : disk.isEmpty() ? real.getGameTime() : ghost.getGameTime(); // with disk chunks the ghost's time was set before they loaded
         long shift = gameTime - real.getGameTime();
         ghost.ghostData().setGameTime(gameTime);
         ghost.setClock(start.clocks() != null ? start.clocks() : real.clockManager().packState());
