@@ -16,7 +16,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.util.ProblemReporter;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
@@ -35,6 +37,7 @@ import obsidivision.ghostpath.mixin.HopperBlockEntityAccessor;
 import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.storage.TagValueOutput;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.ticks.ScheduledTick;
@@ -123,6 +126,16 @@ public final class CauseTracker {
     private int nextEntityIndex;
 
     private final List<ChainEvent> events = new ArrayList<>();
+    /** Where in the level tick we are (step 3): set by hooks in ServerLevel.tick, stored on each event. */
+    private String phase = PHASE_TRIGGER;
+    /** Step 3: record every chain entity's full state after each of its ticks ({@link #entityTrace()}). */
+    private boolean traceEntities;
+    private final List<EntityTrace> trace = new ArrayList<>();
+    /** Game tick (relative) at which each position was first read by chain work. */
+    private final Map<BlockPos, Long> readFirstTick = new HashMap<>();
+    /** Gaps the ghost run hit (ruling 3 of step 3); never in the event log, so real and ghost logs stay comparable. */
+    private final List<Gap> gaps = new ArrayList<>();
+    private final Set<String> gapsSeen = new HashSet<>();
     private final Set<BlockPos> writes = new LinkedHashSet<>();
     private final Map<BlockPos, EnumSet<ReadKind>> reads = new HashMap<>();
     private final Set<String> noCollisionSeen = new HashSet<>();
@@ -379,7 +392,7 @@ public final class CauseTracker {
     }
 
     private void log(ChainEvent.Kind kind, @Nullable BlockPos pos, String detail) {
-        this.events.add(new ChainEvent(this.level.getGameTime() - this.startTime, kind, pos == null ? null : pos.immutable(), detail));
+        this.events.add(new ChainEvent(this.level.getGameTime() - this.startTime, kind, pos == null ? null : pos.immutable(), detail, this.phase));
     }
 
     // ---- hooks: reads (1c) ----
@@ -392,7 +405,9 @@ public final class CauseTracker {
         EnumSet<ReadKind> kinds = this.reads.get(pos);
         if (kinds == null) {
             kinds = EnumSet.noneOf(ReadKind.class);
-            this.reads.put(pos.immutable(), kinds);
+            BlockPos key = pos.immutable();
+            this.reads.put(key, kinds);
+            this.readFirstTick.put(key, this.level.getGameTime() - this.startTime);
         }
         kinds.add(kind);
     }
@@ -608,6 +623,7 @@ public final class CauseTracker {
     /** A collected tick is about to run. Returns true if it is chain work. */
     public boolean onTickRun(ScheduledTick<?> tick) {
         if (this.chainTicks.remove(tick)) {
+            this.phase = tick.type() instanceof net.minecraft.world.level.material.Fluid ? "fluid ticks" : "block ticks";
             this.log(ChainEvent.Kind.TICK_RUN, tick.pos(), String.valueOf(tick.type()));
             return true;
         }
@@ -638,6 +654,7 @@ public final class CauseTracker {
 
     public boolean onBlockEventRun(BlockEventData data) {
         if (this.chainBlockEvents.remove(data)) {
+            this.phase = "block events";
             this.log(ChainEvent.Kind.BLOCK_EVENT_RUN, data.pos(), data.block() + " " + data.paramA() + "," + data.paramB());
             return true;
         }
@@ -712,6 +729,86 @@ public final class CauseTracker {
         this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType()) + item
             + " pos=(" + p.x + ", " + p.y + ", " + p.z + ") v=(" + v.x + ", " + v.y + ", " + v.z + ")"
             + (entity.isRemoved() ? " removed" : ""));
+        if (this.traceEntities) {
+            this.trace.add(new EntityTrace(this.events.size(), this.level.getGameTime() - this.startTime, this.phase, index,
+                EntityType.getKey(entity.getType()).toString(), exactState(entity)));
+        }
+    }
+
+    // ---- step 3: phase, entity trace, gaps ----
+
+    public static final String PHASE_TRIGGER = "trigger";
+
+    /** Sets the phase stored on the events that follow (ServerLevelMixin, around the parts of {@code ServerLevel.tick}). */
+    public void setPhase(Level level, String phase) {
+        if (level == this.level) {
+            this.phase = phase;
+        }
+    }
+
+    public String phase() {
+        return this.phase;
+    }
+
+    /** Turns on the per-tick full entity state record (for {@code /path machine} runs and the ghost run). */
+    public void enableEntityTrace() {
+        this.traceEntities = true;
+    }
+
+    /**
+     * One chain entity's state right after its tick, as text: its saved data without the UUID (position, motion,
+     * rotation, fuse, fall distance, on-ground, ...) plus the transient state that is not saved (previous positions, tick
+     * count, collision flags). {@code seq} is the number of events logged before it, so the trace and the event log
+     * have one order.
+     */
+    public record EntityTrace(int seq, long tick, String phase, int index, String type, String state) {
+    }
+
+    /** Every chain entity's state after each of its ticks (empty unless {@link #enableEntityTrace()} was called). */
+    public List<EntityTrace> entityTrace() {
+        return Collections.unmodifiableList(this.trace);
+    }
+
+    /** First relative tick at which chain work read each position. */
+    public Map<BlockPos, Long> readFirstTicks() {
+        return Collections.unmodifiableMap(this.readFirstTick);
+    }
+
+    private static String exactState(Entity e) {
+        TagValueOutput out = TagValueOutput.createWithContext(ProblemReporter.DISCARDING, e.level().registryAccess());
+        e.saveWithoutId(out);
+        CompoundTag tag = out.buildResult();
+        tag.remove("UUID");
+        return tag + " | old=(" + e.xo + ", " + e.yo + ", " + e.zo + ") xOld=(" + e.xOld + ", " + e.yOld + ", " + e.zOld
+            + ") rotO=(" + e.xRotO + ", " + e.yRotO + ") tickCount=" + e.tickCount + " onGround=" + e.onGround()
+            + " hCollision=" + e.horizontalCollision + " vCollision=" + e.verticalCollision + " hurtMarked=" + e.hurtMarked
+            + " noPhysics=" + e.noPhysics + " fall=" + e.fallDistance;
+    }
+
+    /**
+     * A gap the ghost run hit: something the ghost does not copy (world border, POI, players, lookup by dimension key)
+     * that chain work in the ghost used. Logged once per (tick, kind); {@code seq} orders it against the event log.
+     */
+    public record Gap(int seq, long tick, String phase, String kind, String detail) {
+        @Override
+        public String toString() {
+            return "t+" + this.tick + " (" + this.phase + ") gap: " + this.kind + " " + this.detail;
+        }
+    }
+
+    /** Chain work in a ghost used something the ghost does not copy. Only counts in chain context. */
+    public void onGap(Level level, String kind, String detail) {
+        if (!this.inChain(level)) {
+            return;
+        }
+        long tick = this.level.getGameTime() - this.startTime;
+        if (this.gapsSeen.add(tick + "|" + kind)) {
+            this.gaps.add(new Gap(this.events.size(), tick, this.phase, kind, detail));
+        }
+    }
+
+    public List<Gap> gaps() {
+        return Collections.unmodifiableList(this.gaps);
     }
 
     // ---- hooks: randomness ----

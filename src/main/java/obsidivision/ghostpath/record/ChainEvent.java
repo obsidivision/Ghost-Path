@@ -10,8 +10,13 @@ import org.jspecify.annotations.Nullable;
  * @param kind   what happened
  * @param pos    the block position involved, if any
  * @param detail everything else, as text that is stable across runs (no UUIDs, no absolute game time)
+ * @param phase  where in the level tick it happened (step 3: names the difference); not part of {@link #toString()}
  */
-public record ChainEvent(long tick, Kind kind, @Nullable BlockPos pos, String detail) {
+public record ChainEvent(long tick, Kind kind, @Nullable BlockPos pos, String detail, String phase) {
+    public ChainEvent(long tick, Kind kind, @Nullable BlockPos pos, String detail) {
+        this(tick, kind, pos, detail, "");
+    }
+
     public enum Kind {
         /** a block state or block entity changed (destroyed blocks included) */
         WRITE,

@@ -16,7 +16,8 @@
       "obsidivision.ghostpath.test.MachineCommandTest",
       "obsidivision.ghostpath.test.ChainGapsTest",
       "obsidivision.ghostpath.test.RecordingRulesTest",
-      "obsidivision.ghostpath.test.GhostTest"
+      "obsidivision.ghostpath.test.GhostTest",
+      "obsidivision.ghostpath.test.GhostCheckTest"
     ]
   },
   "depends": {

@@ -10,7 +10,18 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BooleanSupplier;
 import java.util.stream.Stream;
+import com.mojang.serialization.Codec;
 import net.minecraft.core.HolderSet;
+import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
+import net.minecraft.resources.RegistryOps;
+import net.minecraft.network.protocol.Packet;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.attribute.EnvironmentAttributeSystem;
+import net.minecraft.world.clock.PackedClockStates;
+import net.minecraft.world.clock.ServerClockManager;
+import net.minecraft.world.entity.ai.village.poi.PoiManager;
+import net.minecraft.world.level.border.WorldBorder;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
@@ -28,6 +39,7 @@ import net.minecraft.world.level.levelgen.flat.FlatLevelGeneratorSettings;
 import net.minecraft.world.level.saveddata.WeatherData;
 import net.minecraft.world.level.storage.LevelStorageSource;
 import obsidivision.ghostpath.mixin.GhostServerLevelAccessor;
+import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.SaveGuard;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -54,7 +66,17 @@ public final class GhostLevel extends ServerLevel {
     /** Real-time limit for waiting on the ghost's own chunk, entity and light work. */
     static final long WAIT_NANOS = 20_000_000_000L;
 
+    /** The ghost that exists now (one at a time, the autosave hold sees to that); for hooks that cannot reach it otherwise. */
+    private static volatile @Nullable GhostLevel current;
+    /** Nesting depth of ghost work on the server thread ({@link #runWork}, {@link #tickGhost}); packets are watched while > 0. */
+    private static int working;
+    private static @Nullable Thread workThread;
+    private static int strayPackets;
+    private static final List<String> strayPacketNames = new ArrayList<>();
+
     private final GhostLevelData ghostData;
+    /** The ghost's own world clocks (day time), set at the copy and advanced by ghost ticks only; null before the copy. */
+    private @Nullable ServerClockManager ghostClock;
     private final Path tempDir;
     private final LevelStorageSource.LevelStorageAccess storage;
     private final SaveGuard saveGuard;
@@ -89,7 +111,9 @@ public final class GhostLevel extends ServerLevel {
             LevelStem stem = new LevelStem(real.dimensionTypeRegistration(), new FlatLevelSource(settings));
             long zoom = BiomeManager.obfuscateSeed(server.getWorldGenSettings().options().seed()); // as MinecraftServer.java:432
             GhostLevelData data = new GhostLevelData(server.getWorldData(), server.getWorldData().overworldData());
-            return new GhostLevel(server, access, dir, data, stem, zoom, guard);
+            GhostLevel ghost = new GhostLevel(server, access, dir, data, stem, zoom, guard);
+            current = ghost;
+            return ghost;
         } catch (IOException | RuntimeException e) {
             guard.end(false);
             if (access != null) {
@@ -112,6 +136,131 @@ public final class GhostLevel extends ServerLevel {
 
     @Override
     public void save(@Nullable ProgressListener progressListener, boolean flush, boolean noSave) {
+    }
+
+    // ---- day time: the ghost's own copy of the world clocks (step 3, ruling 2) ----
+
+    /**
+     * ServerLevel.java:338 returns the server's clock manager, which the real server advances once per server tick and
+     * the ghost's many ticks inside one server tick would not move. The ghost has its own, from {@link #setClock}.
+     * (During the super constructor the field is still null: the server's is returned, as for the weather.)
+     */
+    @Override
+    public ServerClockManager clockManager() {
+        return this.ghostClock != null ? this.ghostClock : super.clockManager();
+    }
+
+    /**
+     * Gives the ghost its own clocks in the state {@code states}, and rebuilds the environment attributes (sun angle, sky
+     * light, moon phase, ...), which captured the server's clock manager when the level was constructed
+     * (EnvironmentAttributeSystem.java:62, ServerLevel.java:308). {@code setEnvironmentAttributes} is marked
+     * {@code @VisibleForTesting} but is public (ServerLevel.java:349).
+     */
+    void setClock(PackedClockStates states) {
+        RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, this.getServer().registryAccess());
+        Codec<ServerClockManager> codec = ServerClockManager.TYPE.codec();
+        Tag encoded = PackedClockStates.CODEC.encodeStart(ops, states).getOrThrow();
+        ServerClockManager copy = codec.parse(ops, encoded).getOrThrow();
+        copy.init(this.getServer());
+        this.ghostClock = copy;
+        this.setEnvironmentAttributes(EnvironmentAttributeSystem.builder().addDefaultLayers(this).build());
+        this.updateSkyBrightness();
+    }
+
+    /** The ghost's clock state now. */
+    public PackedClockStates clockState() {
+        return this.clockManager().packState();
+    }
+
+    // ---- gaps: things the ghost does not copy, noted when chain work in the ghost uses them (step 3, ruling 3) ----
+
+    private void gap(String kind, String detail) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null && tracker.level() == this) {
+            tracker.onGap(this, kind, detail);
+        }
+    }
+
+    /** ServerLevel.java:1455: the ghost's border is the default one (stored in its own temp storage), not the real one. */
+    @Override
+    public WorldBorder getWorldBorder() {
+        this.gap("world border", "read the ghost's own default border, not the real one");
+        return super.getWorldBorder();
+    }
+
+    /** ServerLevel.java:1539: the ghost's POI storage is empty (POI are not copied). */
+    @Override
+    public PoiManager getPoiManager() {
+        this.gap("POI", "read the ghost's empty POI storage (villagers, bees, lightning rods, portals not copied)");
+        return super.getPoiManager();
+    }
+
+    /**
+     * ServerLevel.java:1516: the ghost has no players. Chain work asking for them (nearest player, line of sight to a
+     * player, ...) gets none. The chunk map's own call when it adds an entity (ChunkMap.java:1143) is not a use.
+     */
+    @Override
+    public List<ServerPlayer> players() {
+        if (CauseTracker.active() != null) {
+            String caller = StackWalker.getInstance().walk(frames -> frames.map(StackWalker.StackFrame::getClassName)
+                .filter(c -> !c.equals(GhostLevel.class.getName())).findFirst().orElse("?"));
+            if (!caller.equals("net.minecraft.server.level.ChunkMap") && !caller.equals("net.minecraft.server.level.ServerChunkCache")) {
+                this.gap("players", "asked for players; the ghost has none (caller " + caller.substring(caller.lastIndexOf('.') + 1) + ")");
+            }
+        }
+        return super.players();
+    }
+
+    /** {@code MinecraftServer.getLevel(key)} was asked for the ghost's key: it is not registered, so it gets null (MinecraftServerLookupMixin). */
+    public static void onLookupByKey() {
+        GhostLevel ghost = current;
+        if (ghost != null) {
+            ghost.gap("level lookup by dimension key", "MinecraftServer.getLevel(ghostpath:ghost) returns null: the ghost is not registered");
+        }
+    }
+
+    // ---- ghost work and stray packets (step 3, ruling 4) ----
+
+    /**
+     * Runs {@code body} as ghost work: while it runs, any packet sent from this thread to any client is counted
+     * ({@link #strayPackets()}). The ghost has no players, its dimension key matches no player's, and nothing of it is
+     * tracked by a client, so the count must stay 0.
+     */
+    public static void runWork(Runnable body) {
+        if (working == 0) {
+            workThread = Thread.currentThread();
+        }
+        working++;
+        try {
+            body.run();
+        } finally {
+            working--;
+        }
+    }
+
+    /** Called for every packet any connection sends ({@code ConnectionSendMixin}). */
+    public static void onPacketSent(Packet<?> packet) {
+        if (working > 0 && Thread.currentThread() == workThread) {
+            strayPackets++;
+            if (strayPacketNames.size() < 20) {
+                strayPacketNames.add(packet.getClass().getSimpleName());
+            }
+            LOGGER.error("[ghostpath] a packet was sent while the ghost was working: {}", packet.getClass().getName());
+        }
+    }
+
+    /** Packets sent while ghost work ran, since {@link #resetStrayPackets()}. Must be 0. */
+    public static int strayPackets() {
+        return strayPackets;
+    }
+
+    public static List<String> strayPacketNames() {
+        return List.copyOf(strayPacketNames);
+    }
+
+    public static void resetStrayPackets() {
+        strayPackets = 0;
+        strayPacketNames.clear();
     }
 
     @Override
@@ -189,11 +338,16 @@ public final class GhostLevel extends ServerLevel {
         if (this.closed || !this.copied) {
             throw new IllegalStateException(this.closed ? "ghost discarded" : "ghost not copied yet");
         }
-        this.resetEmptyTime();
-        this.tick(() -> true);
-        if (this.flushLight) {
-            this.flushLight();
-        }
+        runWork(() -> {
+            this.resetEmptyTime();
+            if (this.ghostClock != null) {
+                this.ghostClock.tick(); // as MinecraftServer.java:1097, before the levels tick
+            }
+            this.tick(() -> true);
+            if (this.flushLight) {
+                this.flushLight();
+            }
+        });
         this.ticks++;
     }
 
@@ -207,6 +361,9 @@ public final class GhostLevel extends ServerLevel {
             return;
         }
         this.closed = true;
+        if (current == this) {
+            current = null;
+        }
         try {
             this.close();
         } catch (IOException | RuntimeException e) {

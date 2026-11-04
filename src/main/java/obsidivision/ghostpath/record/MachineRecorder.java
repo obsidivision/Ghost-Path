@@ -88,6 +88,7 @@ public final class MachineRecorder {
         BlockPos trigger = pos.immutable();
         long startTime = level.getGameTime();
         Weather weather = Weather.of(level);
+        net.minecraft.world.clock.PackedClockStates clocks = level.clockManager().packState();
         SaveGuard saves = SaveGuard.begin(level.getServer());
         UndoLog undo;
         CauseTracker tracker;
@@ -103,9 +104,10 @@ public final class MachineRecorder {
             saves.end(false);
             throw e;
         }
-        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather);
+        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather, clocks);
         current = recorder;
         try {
+            tracker.enableEntityTrace();
             tracker.runAsChain(() -> press(level, trigger, state));
         } catch (RuntimeException e) {
             recorder.cancel();
@@ -115,7 +117,7 @@ public final class MachineRecorder {
     }
 
     /** What the player's click would do, without a player: LeverBlock.java:95 {@code pull}, ButtonBlock.java:112 {@code press}. */
-    private static void press(ServerLevel level, BlockPos pos, BlockState state) {
+    public static void press(ServerLevel level, BlockPos pos, BlockState state) {
         if (state.getBlock() instanceof LeverBlock lever) {
             lever.pull(state, level, pos, null);
         } else if (state.getBlock() instanceof ButtonBlock button) {
@@ -151,6 +153,7 @@ public final class MachineRecorder {
     private final long startTime;
     private final SaveGuard saves;
     private final Weather weatherAtStart;
+    private final net.minecraft.world.clock.PackedClockStates clocksAtStart;
     private int serverTicks;
     // set when the recording part is over and the restore waits for chunks
     private boolean restoring;
@@ -165,8 +168,10 @@ public final class MachineRecorder {
     private @org.jspecify.annotations.Nullable Weather weatherAtEnd;
 
     private MachineRecorder(ServerLevel level, BlockPos trigger, int limit, boolean kick, Listener listener, UndoLog undo,
-                            CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart) {
+                            CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart,
+                            net.minecraft.world.clock.PackedClockStates clocksAtStart) {
         this.saves = saves;
+        this.clocksAtStart = clocksAtStart;
         this.weatherAtStart = weatherAtStart;
         this.level = level;
         this.trigger = trigger;
@@ -238,7 +243,7 @@ public final class MachineRecorder {
         try {
             this.undo.restore(this.scope);
             recording = Recording.of(this.tracker, this.undo, this.trigger, this.endTicks, this.limit, this.endLimitHit, this.endPending, this.kick,
-                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size());
+                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size(), this.clocksAtStart);
         } catch (RuntimeException e) {
             current = null;
             this.removeRestoreTickets();

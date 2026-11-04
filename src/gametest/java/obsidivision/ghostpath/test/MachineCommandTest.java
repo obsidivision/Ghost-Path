@@ -164,7 +164,7 @@ public class MachineCommandTest {
                     // otherwise identical runs (skylight is updated by the asynchronous light thread after the restore).
                     helper.assertTrue(normalized(r1).equals(normalized(r2)), "second run differs: " + r1.summary() + " vs " + r2.summary());
                     helper.assertTrue(readsWithoutLight(r1).equals(readsWithoutLight(r2)) && r1.writes().equals(r2.writes())
-                        && r1.entityAreas().equals(r2.entityAreas()) && r1.heightmapColumns().equals(r2.heightmapColumns()), "second run has a different footprint");
+                        && r1.entityAreas().equals(r2.entityAreas()) && heightmapEqualUpToLight(r1, r2), "second run has a different footprint");
 
                     directRun(helper, level, lever, r1, () -> afterwards(helper, level, lever, before, min, max));
                 });
@@ -175,7 +175,22 @@ public class MachineCommandTest {
     private static List<String> normalized(Recording r) {
         // light reads are not repeatable (DESIGN). The restore is scoped to the chain, so "chunks loaded again for the
         // restore" is compared again (it varied with unrelated chunks while the restore was level-wide).
-        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *")).toList();
+        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *").replaceAll("heightmap columns \\d+", "heightmap columns *")).toList();
+    }
+
+    /**
+     * Heightmap columns are read only after canSeeSky found sky light (Level.precipitationAt, Level.java:961-963), so a column
+     * read in one run only, where both runs read light, is the light gate closed in one run (seen: 7 vs 8 columns, DESIGN step 3).
+     */
+    private static boolean heightmapEqualUpToLight(Recording a, Recording b) {
+        Set<CauseTracker.Column> diff = new HashSet<>(a.heightmapColumns());
+        diff.addAll(b.heightmapColumns());
+        diff.removeIf(c -> a.heightmapColumns().contains(c) && b.heightmapColumns().contains(c));
+        return diff.stream().allMatch(c -> lightIn(a, c) && lightIn(b, c));
+    }
+
+    private static boolean lightIn(Recording r, CauseTracker.Column c) {
+        return r.reads().entrySet().stream().anyMatch(e -> e.getKey().getX() == c.x() && e.getKey().getZ() == c.z() && e.getValue().contains(CauseTracker.ReadKind.LIGHT));
     }
 
     private static Map<BlockPos, Set<CauseTracker.ReadKind>> readsWithoutLight(Recording r) {
@@ -192,7 +207,8 @@ public class MachineCommandTest {
 
     /** The printed summary is the recording's; each number is recomputed from the recording's raw data. */
     private static void checkSummary(GameTestHelper helper, Recording r, Capture out) {
-        helper.assertTrue(out.lines.size() >= 1 + r.summary().size() && out.lines.subList(out.lines.size() - r.summary().size(), out.lines.size()).equals(r.summary()),
+        // the recording's summary is printed as one block; the ghost check's lines (step 3) follow it
+        helper.assertTrue(out.lines.size() >= 1 + r.summary().size() && java.util.Collections.indexOfSubList(out.lines, r.summary()) >= 0,
             "printed summary is not the recording's: " + out.lines + " vs " + r.summary());
         for (String key : List.of("ticks", "written", "read", "entity areas", "TNT spawned: 1", "Unseeded draws: 0 warnings", "Late block entities: 0")) {
             helper.assertTrue(r.summary().stream().anyMatch(l -> l.contains(key)), "summary lacks '" + key + "': " + r.summary());

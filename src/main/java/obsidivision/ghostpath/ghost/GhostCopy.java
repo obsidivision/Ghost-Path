@@ -60,6 +60,8 @@ import obsidivision.ghostpath.mixin.LevelWeatherAccessor;
 import obsidivision.ghostpath.mixin.LivingEntityAccessor;
 import obsidivision.ghostpath.mixin.ServerLevelAccessor;
 import obsidivision.ghostpath.record.CauseTracker;
+import obsidivision.ghostpath.record.Weather;
+import net.minecraft.world.clock.PackedClockStates;
 import obsidivision.ghostpath.record.WatchedRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -104,15 +106,31 @@ public final class GhostCopy {
      * ghost is discarded (which ends its autosave hold) and the error is rethrown.
      */
     public static Report copy(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max) {
+        return copy(real, ghost, min, max, Start.NOW);
+    }
+
+    /**
+     * What the ghost starts with that is not in the copied chunks (step 3): the weather and the world clocks. A recording
+     * restores the world but not these (they move on while it runs), so the ghost check starts the ghost from the state at
+     * the recording's start. {@link #NOW} copies the real level's current state (step 2).
+     *
+     * @param weather the weather to start with, or null for the real level's weather now
+     * @param clocks  the world clocks to start with, or null for the real level's clocks now
+     */
+    public record Start(@org.jspecify.annotations.Nullable Weather weather, @org.jspecify.annotations.Nullable PackedClockStates clocks) {
+        public static final Start NOW = new Start(null, null);
+    }
+
+    public static Report copy(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
         try {
-            return copyInto(real, ghost, min, max);
+            return copyInto(real, ghost, min, max, start);
         } catch (RuntimeException e) {
             ghost.discard();
             throw e;
         }
     }
 
-    private static Report copyInto(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max) {
+    private static Report copyInto(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
         }
@@ -132,6 +150,7 @@ public final class GhostCopy {
         }
         Map<Long, int[]> levels = copyTicketLevels(real, ghost, chunks);
         ghost.ghostData().setGameTime(real.getGameTime());
+        ghost.setClock(start.clocks() != null ? start.clocks() : real.clockManager().packState());
 
         int sections = 0;
         for (ChunkPos c : chunks) {
@@ -159,7 +178,7 @@ public final class GhostCopy {
             }
         }
         int[] entityCounts = copyEntities(real, ghost, box);
-        copyWeather(real, ghost);
+        copyWeather(real, ghost, start.weather());
         Report report = new Report(chunks.size(), sections, blockEntities, blockTicks, fluidTicks, blockEvents, entityCounts[0], entityCounts[1],
             entityCounts[2], ghost.getGameTime(), levels);
         report.lines().forEach(l -> LOGGER.info("[ghostpath] {}", l));
@@ -456,14 +475,13 @@ public final class GhostCopy {
     // ---- weather ----
 
     /** Server weather data (ServerLevel.java:1691) copied into the ghost's own, plus the four Level fields (Level.java:120-123). */
-    private static void copyWeather(ServerLevel real, GhostLevel ghost) {
-        WeatherData w = real.getWeatherData();
-        ghost.setWeather(new WeatherData(w.getClearWeatherTime(), w.getRainTime(), w.getThunderTime(), w.isRaining(), w.isThundering()));
-        LevelWeatherAccessor r = (LevelWeatherAccessor) real;
+    private static void copyWeather(ServerLevel real, GhostLevel ghost, @org.jspecify.annotations.Nullable Weather at) {
+        Weather w = at != null ? at : Weather.of(real);
+        ghost.setWeather(new WeatherData(w.clearWeatherTime(), w.rainTime(), w.thunderTime(), w.raining(), w.thundering()));
         LevelWeatherAccessor g = (LevelWeatherAccessor) (Object) ghost;
-        g.ghostpath$setORainLevel(r.ghostpath$oRainLevel());
-        g.ghostpath$setRainLevel(r.ghostpath$rainLevel());
-        g.ghostpath$setOThunderLevel(r.ghostpath$oThunderLevel());
-        g.ghostpath$setThunderLevel(r.ghostpath$thunderLevel());
+        g.ghostpath$setORainLevel(w.oRainLevel());
+        g.ghostpath$setRainLevel(w.rainLevel());
+        g.ghostpath$setOThunderLevel(w.oThunderLevel());
+        g.ghostpath$setThunderLevel(w.thunderLevel());
     }
 }

@@ -5,10 +5,13 @@ import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import java.util.function.Predicate;
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
+import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.BlockEventData;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.level.material.Fluid;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Final;
@@ -111,10 +114,45 @@ public abstract class ServerLevelMixin {
         }
     }
 
+    // ---- phases (step 3): where in ServerLevel.tick (:355-455) an event happened ----
+
+    /** 26.2 ServerLevel.java:815 {@code private void tickBlock(BlockPos, Block)}: the "blockTicks" part of tick (:396-399). */
+    @WrapMethod(method = "tickBlock")
+    private void ghostpath$phaseBlockTick(BlockPos pos, Block type, Operation<Void> original) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.setPhase((net.minecraft.world.level.Level) (Object) this, "block ticks");
+        }
+        original.call(pos, type);
+    }
+
+    /** 26.2 ServerLevel.java:807 {@code private void tickFluid(BlockPos, Fluid)}: the "fluidTicks" part of tick (:400-401). */
+    @WrapMethod(method = "tickFluid")
+    private void ghostpath$phaseFluidTick(BlockPos pos, Fluid type, Operation<Void> original) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.setPhase((net.minecraft.world.level.Level) (Object) this, "fluid ticks");
+        }
+        original.call(pos, type);
+    }
+
+    /** 26.2 ServerLevel.java:1251 {@code private void runBlockEvents()}: the "blockEvents" part of tick (:413-415). */
+    @WrapMethod(method = "runBlockEvents")
+    private void ghostpath$phaseBlockEvents(Operation<Void> original) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.setPhase((net.minecraft.world.level.Level) (Object) this, "block events");
+        }
+        original.call();
+    }
+
     /** 26.2 ServerLevel.java:822 {@code public void tickNonPassenger(Entity)}: one entity's tick, then its passengers'. */
     @WrapMethod(method = "tickNonPassenger")
     private void ghostpath$chainEntityTick(Entity entity, Operation<Void> original) {
         CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.setPhase((net.minecraft.world.level.Level) (Object) this, "entities");
+        }
         boolean chain = tracker != null && tracker.isChainEntity(entity);
         if (!chain) {
             CauseTracker.within(tracker, false, () -> original.call(entity));

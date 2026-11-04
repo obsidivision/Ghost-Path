@@ -13,6 +13,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import obsidivision.ghostpath.PathSettings;
+import obsidivision.ghostpath.ghost.GhostCheck;
 import obsidivision.ghostpath.record.MachineRecorder;
 import obsidivision.ghostpath.record.Recording;
 
@@ -66,6 +67,10 @@ public final class PathCommand {
                 @Override
                 public void done(Recording recording) {
                     for (String line : recording.summary()) {
+                        source.sendSuccess(() -> Component.literal(line), false);
+                    }
+                    // step 3: the same machine in a ghost, compared with what was just recorded
+                    for (String line : GhostCheck.run(source.getLevel(), recording).lines()) {
                         source.sendSuccess(() -> Component.literal(line), false);
                     }
                 }

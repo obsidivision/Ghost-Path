@@ -42,6 +42,9 @@ import net.minecraft.world.phys.AABB;
  * @param sharedRestored  positions written by both chain and non-chain work (restored)
  * @param nonChainBlocksLeft positions changed only outside the chain during the recording, left in place
  * @param nonChainEntitiesLeft entities spawned or changed only outside the chain, left in place
+ * @param clocksAtStart   the world clocks (day time) when the trigger was pressed (step 3: the ghost starts from them)
+ * @param entityTrace     every chain entity's full state after each of its ticks (step 3)
+ * @param readFirstTicks  the relative tick at which each read position was first read
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -74,11 +77,14 @@ public record Recording(
     int sharedRestored,
     int nonChainBlocksLeft,
     int nonChainEntitiesLeft,
-    List<String> notFollowed
+    List<String> notFollowed,
+    net.minecraft.world.clock.PackedClockStates clocksAtStart,
+    List<CauseTracker.EntityTrace> entityTrace,
+    Map<BlockPos, Long> readFirstTicks
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
-                        Weather weatherAtEnd, int chunksReloaded) {
+                        Weather weatherAtEnd, int chunksReloaded, net.minecraft.world.clock.PackedClockStates clocksAtStart) {
         int notAllowed = 0;
         int allowed = 0;
         int inexact = 0;
@@ -108,7 +114,8 @@ public record Recording(
             undo.ticksNotRestored(),
             weatherAtStart, weatherAtEnd, chunksReloaded, undo.entitiesNotRestored(), tracker.itemDriftTicks(),
             undo.sharedRestored(), undo.nonChainBlocksLeft(), undo.nonChainEntitiesLeft(),
-            tracker.notFollowed().stream().map(ChainEvent::toString).toList());
+            tracker.notFollowed().stream().map(ChainEvent::toString).toList(),
+            clocksAtStart, List.copyOf(tracker.entityTrace()), Map.copyOf(tracker.readFirstTicks()));
     }
 
     /** Block positions read or written: the footprint without entity areas. */

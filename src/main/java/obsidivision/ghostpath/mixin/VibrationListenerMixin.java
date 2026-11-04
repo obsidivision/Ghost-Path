@@ -5,7 +5,9 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.world.level.gameevent.vibrations.VibrationSystem;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import obsidivision.ghostpath.record.CauseTracker;
+import obsidivision.ghostpath.record.UndoLog;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -30,10 +32,21 @@ public abstract class VibrationListenerMixin {
      * and receives. Both {@code handleGameEvent} (:235) and {@code forceScheduleVibration} (:244) end here. Game events
      * are delivered synchronously (GameEventDispatcher.post, GameEventDispatcher.java:22-61), so a chain game event
      * reaches this in chain context.
+     *
+     * <p>Undo: {@code addCandidate} puts the vibration into the owner's {@code VibrationSystem.Data} (saved in its NBT as
+     * {@code listener.selector}) without any hooked call (no {@code getBlockEntity}, no {@code setChanged}), so the
+     * block entity's first-touch snapshot (UndoLog) would be taken at its next tick, already holding the chain's vibration,
+     * and the restore would put that pending vibration back: the real sensor would activate after the recording (found by
+     * the step 3 ghost check: the copy of the restored sensor had the lever's vibration pending). So the snapshot is taken
+     * here, before the candidate is added.
      */
     @Inject(method = "scheduleVibration", at = @At("HEAD"))
     private void ghostpath$beforeScheduleVibration(ServerLevel level, VibrationSystem.Data data, Holder<GameEvent> event, GameEvent.Context context,
                                                    Vec3 origin, Vec3 dest, CallbackInfo ci) {
+        UndoLog undo = UndoLog.active();
+        if (undo != null && this.system instanceof BlockEntity blockEntity) {
+            undo.onBlockEntityAccess(blockEntity);
+        }
         CauseTracker tracker = CauseTracker.active();
         if (tracker != null) {
             tracker.onVibrationScheduled(level, this.system);
