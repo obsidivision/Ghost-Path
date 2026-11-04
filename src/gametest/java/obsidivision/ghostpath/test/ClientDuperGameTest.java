@@ -55,11 +55,14 @@ public class ClientDuperGameTest implements FabricClientGameTest {
                     }
                 }
                 at[0] = new BlockPos(x, y + 1, z);
+                for (int dy = -40; dy <= 6; dy++) { // the compression column; the TNT fly east into it
+                    level.setBlock(at[0].offset(24, dy, 1), Blocks.STONE.defaultBlockState(), 2 | 16);
+                }
                 for (Litematic.Block b : lit.blocks) {
                     level.setBlock(at[0].offset(b.pos()), b.state(), 2 | 16);
                 }
                 level.setBlock(at[0].offset(DustDuperTest.LEVER).below(), Blocks.STONE.defaultBlockState(), 2 | 16);
-                level.setBlock(at[0].offset(DustDuperTest.OBSERVER), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, Direction.EAST), 2 | 16);
+                level.setBlock(at[0].offset(DustDuperTest.OBSERVER), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, DustDuperTest.OBSERVER_FACING), 2 | 16);
                 level.setBlock(at[0].offset(DustDuperTest.LEVER), Blocks.LEVER.defaultBlockState().setValue(net.minecraft.world.level.block.LeverBlock.FACE, net.minecraft.world.level.block.state.properties.AttachFace.FLOOR), 2 | 16);
             });
             BlockPos origin = at[0];

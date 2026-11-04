@@ -29,8 +29,8 @@ public class DustDuperTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
     static final String FILE = "/schematics/dust-duper-10-compression.litematic";
 
-    /** Where the machine's lowest corner sits in the test structure (a stone floor under it). */
-    static final BlockPos ORIGIN = new BlockPos(2, 2, 2);
+    /** Where the machine's lowest corner sits in the test structure: 40 blocks above the floor, so nothing is under it and the TNT have room to fall and fly. */
+    static final BlockPos ORIGIN = new BlockPos(2, 42, 2);
 
     static Litematic load() {
         try (InputStream in = DustDuperTest.class.getResourceAsStream(FILE)) {
@@ -51,17 +51,18 @@ public class DustDuperTest {
         }
     }
 
-    /** The trigger added to the file (it has none): a lever on the floor east of the machine, watched by an observer whose back is against the east end piston (14,2,1). A lever left on the piston itself holds it extended and gives 19-20 TNT; the observer's 2-tick pulse gives the 10 per cycle (see DESIGN). */
+    /** The trigger added to the file (it has none): a 2-tick pulse into the back of the east piston (14,2,1), the piston that pushes the whole TNT row. A lever on stone at (16,2,1) is watched by an observer at (15,2,1) whose back is against that piston, so pulling the lever is the pulse (see DESIGN). */
     /** Ticks the placed machine runs on its own before the lever is pulled: the file holds a mid-cycle state, placed without updates. */
     static final int SETTLE_TICKS = 300;
     static final BlockPos LEVER = new BlockPos(16, 2, 1);
     /** The observer that turns the lever pull into a 2-tick pulse into the back of the east piston. */
     static final BlockPos OBSERVER = new BlockPos(15, 2, 1);
+    static final Direction OBSERVER_FACING = Direction.EAST;
 
     /** The machine and a margin: TNT of tests next door (inflate(30) reached them) does not count. */
     static net.minecraft.world.phys.AABB machineBox(GameTestHelper helper) {
-        BlockPos a = helper.absolutePos(ORIGIN.offset(-3, -1, -3));
-        BlockPos b = helper.absolutePos(ORIGIN.offset(19, 12, 7));
+        BlockPos a = helper.absolutePos(ORIGIN.offset(-3, -45, -3));
+        BlockPos b = helper.absolutePos(ORIGIN.offset(80, 12, 7));
         return new net.minecraft.world.phys.AABB(a.getX(), a.getY(), a.getZ(), b.getX(), b.getY(), b.getZ());
     }
 
@@ -85,6 +86,13 @@ public class DustDuperTest {
         helper.assertTrue(lit.blocks.stream().filter(b -> b.state().is(Blocks.TNT)).count() == 10, "TNT blocks");
         helper.assertTrue(lit.fixerChanges.stream().noneMatch(c -> c.startsWith("UNKNOWN")), "unknown blocks: " + lit.fixerChanges);
         helper.succeed();
+    }
+
+    /** The compression column: stone at x = 24, z = 1, from the floor up to the machine's top; the TNT fly east into it. */
+    static void addColumn(GameTestHelper helper) {
+        for (int y = -40; y <= 6; y++) {
+            helper.getLevel().setBlock(helper.absolutePos(ORIGIN.offset(24, y, 1)), Blocks.STONE.defaultBlockState(), 2 | 16);
+        }
     }
 
     /** What one probe saw in its 80 ticks. */
@@ -111,19 +119,35 @@ public class DustDuperTest {
         floor(helper);
         place(helper, lit, ORIGIN);
         if (withTrigger) {
+            addColumn(helper);
             addTrigger(helper, pulled);
         }
     }
 
+    /** A lever (on stone) watched by an observer whose back is against a lime concrete block. */
+    record Trigger(BlockPos lever, BlockPos observer, Direction facing) {
+    }
+
+    /** The lime concrete (3,3,1) pulsed for 2 ticks: lights the 10 TNT, which then only fall. */
+    static final Trigger LIME_A = new Trigger(new BlockPos(1, 3, 1), new BlockPos(2, 3, 1), Direction.WEST);
+    /** The east end piston (14,2,1) that pushes the whole TNT row, powered for 2 ticks from its back. */
+    static final Trigger PISTON_E = new Trigger(LEVER, OBSERVER, OBSERVER_FACING);
+    /** The west piston (0,2,1), the same from the other end. */
+    static final Trigger PISTON_W = new Trigger(new BlockPos(-2, 2, 1), new BlockPos(-1, 2, 1), Direction.WEST);
+
     static void addTrigger(GameTestHelper helper, boolean pulled) {
+        addTrigger(helper, pulled, PISTON_E);
+    }
+
+    static void addTrigger(GameTestHelper helper, boolean pulled, Trigger t) {
         // no updates: placing the lever with updates would itself pulse the observer and start the machine
         ServerLevel placeLevel = helper.getLevel();
-        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(LEVER).below()), Blocks.STONE.defaultBlockState(), 2 | 16);
-        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(OBSERVER)), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, Direction.EAST), 2 | 16);
-        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(LEVER)), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR), 2 | 16);
+        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(t.lever()).below()), Blocks.STONE.defaultBlockState(), 2 | 16);
+        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(t.observer())), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, t.facing()), 2 | 16);
+        placeLevel.setBlock(helper.absolutePos(ORIGIN.offset(t.lever())), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR), 2 | 16);
         if (pulled) {
             ServerLevel level = helper.getLevel();
-            BlockPos lever = helper.absolutePos(ORIGIN.offset(LEVER));
+            BlockPos lever = helper.absolutePos(ORIGIN.offset(t.lever()));
             BlockState state = level.getBlockState(lever);
             ((LeverBlock) state.getBlock()).pull(state, level, lever, null);
         }
@@ -138,6 +162,7 @@ public class DustDuperTest {
         int[] first = {-1};
         boolean[] moved = {false};
         String[] sig = {""};
+        String[] motion = {""};
         Set<java.util.UUID> seen = new HashSet<>();
         Runnable[] step = new Runnable[1];
         step[0] = () -> {
@@ -157,7 +182,32 @@ public class DustDuperTest {
                         sum[2] += t.getZ() - base.getZ();
                         n++;
                     }
-                    sig[0] = String.format("n=%d sum=%.2f/%.2f/%.2f", n, sum[0], sum[1], sum[2]);
+                    double lo = 1e9;
+                    double hi = -1e9;
+                    for (PrimedTnt t : level.getEntitiesOfClass(PrimedTnt.class, machineBox(helper))) {
+                        lo = Math.min(lo, t.getX());
+                        hi = Math.max(hi, t.getX());
+                    }
+                    sig[0] = String.format("n=%d sum=%.2f/%.2f/%.2f x spread %.2f", n, sum[0], sum[1], sum[2], n == 0 ? 0.0 : hi - lo);
+                }
+                if (age[0] == 4 || age[0] == 8 || age[0] == 20 || age[0] == 45 || age[0] == 70) {
+                    double maxVx = 0.0;
+                    double maxVz = 0.0;
+                    double lo = 1e9;
+                    double hi = -1e9;
+                    double loZ = 1e9;
+                    double hiZ = -1e9;
+                    int n = 0;
+                    for (PrimedTnt t : level.getEntitiesOfClass(PrimedTnt.class, machineBox(helper))) {
+                        maxVx = Math.max(maxVx, Math.abs(t.getDeltaMovement().x));
+                        maxVz = Math.max(maxVz, Math.abs(t.getDeltaMovement().z));
+                        lo = Math.min(lo, t.getX());
+                        hi = Math.max(hi, t.getX());
+                        loZ = Math.min(loZ, t.getZ());
+                        hiZ = Math.max(hiZ, t.getZ());
+                        n++;
+                    }
+                    motion[0] += String.format(" [age %d: n=%d xspread %.2f zspread %.2f max|vx| %.3f max|vz| %.3f]", age[0], n, n == 0 ? 0.0 : hi - lo, n == 0 ? 0.0 : hiZ - loZ, maxVx, maxVz);
                 }
                 for (BlockPos p : BlockPos.betweenClosed(helper.absolutePos(ORIGIN.offset(-1, -1, -1)), helper.absolutePos(ORIGIN.offset(lit.sizeX + 1, lit.sizeY + 1, lit.sizeZ + 1)))) {
                     BlockState b = level.getBlockState(p);
@@ -166,13 +216,14 @@ public class DustDuperTest {
             }
             if (at[0] < 0 || age[0] >= ticks) {
                 if (at[0] >= 0) {
-                    results.add(new Result(labels.get(at[0]), seen.size(), first[0], moved[0], sig[0]));
+                    results.add(new Result(labels.get(at[0]), seen.size(), first[0], moved[0], sig[0] + motion[0]));
                 }
                 at[0]++;
                 age[0] = 0;
                 first[0] = -1;
                 moved[0] = false;
                 sig[0] = "";
+                motion[0] = "";
                 seen.clear();
                 if (at[0] >= labels.size()) {
                     done.accept(results);
@@ -301,19 +352,32 @@ public class DustDuperTest {
     /** The cells the recording of the real duper is reported on: every number printed in the log is what DESIGN quotes. */
     @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_main")
     public void recordTheDuper(GameTestHelper helper) {
+        recordWith(helper, PISTON_E);
+    }
+
+    /** The same, with a 2-tick pulse into the lime concrete (3,3,1) instead: the TNT only fall. */
+    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_lime2")
+    public void recordLimePulse(GameTestHelper helper) {
+        recordWith(helper, LIME_A);
+    }
+
+    /** The same, from the west piston. */
+    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_west")
+    public void recordWestPiston(GameTestHelper helper) {
+        recordWith(helper, PISTON_W);
+    }
+
+    private void recordWith(GameTestHelper helper, Trigger t) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
         Runnable unforce = TestSupport.forceAround(helper, 4);
-        floor(helper);
         Litematic lit = load();
         ServerLevel level = helper.getLevel();
-        place(helper, lit, ORIGIN);
-        addTrigger(helper, false);
         LiveRerunTest.Capture chat = new LiveRerunTest.Capture();
         List<BlockPos> corners = List.of(ORIGIN.offset(-6, 0, -6), ORIGIN.offset(20, 0, -6), ORIGIN.offset(-6, 0, 12), ORIGIN.offset(20, 0, 12), ORIGIN.offset(7, 2, 1));
-        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> TestSupport.later(helper, SETTLE_TICKS, () -> {
+        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> { floor(helper); place(helper, lit, ORIGIN); addColumn(helper); addTrigger(helper, false, t); for (int dbg : new int[] {0, 1, 5, 30}) { helper.runAfterDelay(dbg, () -> LOG.info("[ghostpath] duper dbg +{}: lever {} observer {} support {}", dbg, helper.getBlockState(ORIGIN.offset(t.lever())), helper.getBlockState(ORIGIN.offset(t.observer())), helper.getBlockState(ORIGIN.offset(t.lever()).below()))); } TestSupport.later(helper, SETTLE_TICKS, () -> {
             long t0 = System.nanoTime();
-            LiveRerunTest.recordAndWatch(helper, level, chat, ORIGIN.offset(LEVER), (rec, watch) -> {
+            LiveRerunTest.recordAndWatch(helper, level, chat, ORIGIN.offset(t.lever()), (rec, watch) -> {
                 long recordMs = (System.nanoTime() - t0) / 1_000_000;
                 try {
                     report(helper, rec, recordMs, chat);
@@ -323,7 +387,7 @@ public class DustDuperTest {
                 }
                 helper.succeed();
             });
-        })), 0);
+        }); }), 0);
     }
 
     private static void report(GameTestHelper helper, obsidivision.ghostpath.record.Recording rec, long recordMs, LiveRerunTest.Capture chat) {
@@ -332,7 +396,7 @@ public class DustDuperTest {
         List<Integer> spawns = obsidivision.ghostpath.watch.Prediction.tntSpawnTicks(rec.events(), rec.entityTrace());
         java.util.TreeMap<Integer, Integer> waves = new java.util.TreeMap<>();
         spawns.forEach(t -> waves.merge(t, 1, Integer::sum));
-        LOG.info("[ghostpath] duper: {} ticks recorded (limit {}, hit {}); TNT spawned {}, in waves (tick -> count): {}", rec.ticks(), rec.limit(), rec.limitHit(), rec.tntSpawned(), waves);
+        LOG.info("[ghostpath] duper (trigger lever at {} in machine coordinates): {} ticks recorded (limit {}, hit {}); TNT spawned {}, in waves (tick -> count): {}", rec.trigger().subtract(helper.absolutePos(ORIGIN)).toShortString(), rec.ticks(), rec.limit(), rec.limitHit(), rec.tntSpawned(), waves);
         BlockPos base = helper.absolutePos(ORIGIN);
         for (obsidivision.ghostpath.record.ChainEvent e : rec.events()) {
             if (e.kind() == obsidivision.ghostpath.record.ChainEvent.Kind.BLOCK_EVENT_RUN || e.kind() == obsidivision.ghostpath.record.ChainEvent.Kind.WRITE && e.detail().contains("minecraft:piston}") && false) {
@@ -356,6 +420,7 @@ public class DustDuperTest {
             int alive = 0;
             double[] min = {1e9, 1e9, 1e9};
             double[] max = {-1e9, -1e9, -1e9};
+            double maxVx = 0.0;
             for (obsidivision.ghostpath.preview.PathSnapshot.Line l : snap.lines()) {
                 if (!l.type().equals("minecraft:tnt")) {
                     continue;
@@ -365,12 +430,13 @@ public class DustDuperTest {
                     continue;
                 }
                 alive += l.count();
+                maxVx = Math.max(maxVx, Math.abs(l.vel()[3 * i]));
                 for (int a = 0; a < 3; a++) {
                     min[a] = Math.min(min[a], l.xyz()[3 * i + a]);
                     max[a] = Math.max(max[a], l.xyz()[3 * i + a]);
                 }
             }
-            String row = alive == 0 ? "" : alive + " alive, spread " + String.format("%.3f/%.3f/%.3f", max[0] - min[0], max[1] - min[1], max[2] - min[2]) + " at x " + String.format("%.2f", min[0]) + " y " + String.format("%.2f", min[1]) + " z " + String.format("%.2f", min[2]);
+            String row = alive == 0 ? "" : alive + " alive, spread " + String.format("%.3f/%.3f/%.3f", max[0] - min[0], max[1] - min[1], max[2] - min[2]) + " at x " + String.format("%.2f", min[0]) + " y " + String.format("%.2f", min[1]) + " z " + String.format("%.2f", min[2]) + ", max |vx| " + String.format("%.3f", maxVx);
             if (!row.isEmpty() && !row.equals(last)) {
                 table.append("\n  t+").append(t).append(": ").append(row);
             }
@@ -384,13 +450,10 @@ public class DustDuperTest {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
         Runnable unforce = TestSupport.forceAround(helper, 4);
-        floor(helper);
         Litematic lit = load();
         ServerLevel level = helper.getLevel();
-        place(helper, lit, ORIGIN);
-        addTrigger(helper, false);
         List<BlockPos> corners = List.of(ORIGIN.offset(-6, 0, -6), ORIGIN.offset(20, 0, -6), ORIGIN.offset(-6, 0, 12), ORIGIN.offset(20, 0, 12), ORIGIN.offset(7, 2, 1));
-        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> TestSupport.later(helper, SETTLE_TICKS, () -> {
+        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> { floor(helper); place(helper, lit, ORIGIN); addColumn(helper); addTrigger(helper, false); TestSupport.later(helper, SETTLE_TICKS, () -> {
             BlockPos lever = helper.absolutePos(ORIGIN.offset(LEVER));
             BlockState on = level.getBlockState(lever);
             ((LeverBlock) on.getBlock()).pull(on, level, lever, null);
@@ -419,13 +482,89 @@ public class DustDuperTest {
                 helper.succeed();
             };
             helper.runAfterDelay(1, TestSupport.once(step[0]));
-        })), 0);
+        }); }), 0);
     }
 
     /** The same pull without the mod: what the recording must agree with. */
     @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_plain")
     public void theGameAloneDoesTheSame(GameTestHelper helper) {
         plain(helper, 0);
+    }
+
+    /**
+     * Exploration (user's finding): the machine is started by a 2-tick pulse into a lime concrete block. For each lime block and each
+     * free neighbour, an observer with its back against the block is pulsed by placing a stone in front of it; prints what each does.
+     */
+    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_lime")
+    public void exploreLimePulse(GameTestHelper helper) {
+        TestSupport.removeBarriers(helper);
+        CauseTrackingTest.forceChunks(helper, true);
+        Runnable unforce = TestSupport.forceAround(helper, 2);
+        floor(helper);
+        Litematic lit = load();
+        place(helper, lit, ORIGIN);
+        List<String> labels = new ArrayList<>();
+        List<Runnable> setups = new ArrayList<>();
+        for (Litematic.Block b : lit.blocks) {
+            if (!b.state().is(Blocks.CONCRETE.pick(net.minecraft.world.item.DyeColor.LIME))) {
+                continue;
+            }
+            for (Direction d : Direction.values()) {
+                BlockPos n = b.pos().relative(d);
+                BlockPos front = n.relative(d);
+                if (!helper.getBlockState(ORIGIN.offset(n)).isAir() || !helper.getBlockState(ORIGIN.offset(front)).isAir()) {
+                    continue;
+                }
+                labels.add("lime " + b.pos().toShortString() + ": observer at " + n.toShortString() + " facing " + d.getName());
+                setups.add(() -> {
+                    fresh(helper, lit, false, false);
+                    ServerLevel level = helper.getLevel();
+                    level.setBlock(helper.absolutePos(ORIGIN.offset(n)), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, d), 2 | 16);
+                    helper.setBlock(ORIGIN.offset(front), Blocks.STONE);
+                });
+            }
+        }
+        probes(helper, lit, labels, setups, 90, results -> {
+            results.forEach(r -> LOG.info("[ghostpath] duper lime: {} -> {} TNT, first at {}, {}", r.label(), r.tnt(), r.firstTnt(), r.signature()));
+            CauseTrackingTest.forceChunks(helper, false);
+            unforce.run();
+            helper.succeed();
+        });
+    }
+
+    /**
+     * Exploration (the owner's finding): after the east piston's pulse the 10 TNT fly east as a line. A vertical column of stone
+     * (z = 1, from the floor to the machine's top) at some distance east is where they should stack.
+     */
+    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_wall")
+    public void exploreWall(GameTestHelper helper) {
+        TestSupport.removeBarriers(helper);
+        CauseTrackingTest.forceChunks(helper, true);
+        Runnable unforce = TestSupport.forceAround(helper, 4);
+        floor(helper);
+        Litematic lit = load();
+        List<String> labels = new ArrayList<>();
+        List<Runnable> setups = new ArrayList<>();
+        int[] xs = {0, 19, 22, 26, 30, 35, 40, 50};
+        for (int x : xs) {
+            labels.add(x == 0 ? "no column" : "column at x=" + x);
+            setups.add(() -> {
+                fresh(helper, lit, false, false);
+                if (x != 0) {
+                    for (int y = -40; y <= 6; y++) {
+                        helper.setBlock(ORIGIN.offset(x, y, 1), Blocks.STONE);
+                    }
+                }
+                addTrigger(helper, false, PISTON_E);
+                addTrigger(helper, true, PISTON_E);
+            });
+        }
+        probes(helper, lit, labels, setups, 90, results -> {
+            results.forEach(r -> LOG.info("[ghostpath] duper wall: {} -> {} TNT, {}", r.label(), r.tnt(), r.signature()));
+            CauseTrackingTest.forceChunks(helper, false);
+            unforce.run();
+            helper.succeed();
+        });
     }
 
     /** The piston that changes the machine without moving by itself (found by {@link #explorePistons}): next to the observer at (13,1,1). */
@@ -441,14 +580,11 @@ public class DustDuperTest {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
         Runnable unforce = TestSupport.forceAround(helper, 4);
-        floor(helper);
         Litematic lit = load();
         ServerLevel level = helper.getLevel();
-        place(helper, lit, ORIGIN);
-        addTrigger(helper, false);
         LiveRerunTest.Capture chat = new LiveRerunTest.Capture();
         List<BlockPos> corners = List.of(ORIGIN.offset(-6, 0, -6), ORIGIN.offset(20, 0, -6), ORIGIN.offset(-6, 0, 12), ORIGIN.offset(20, 0, 12), ORIGIN.offset(7, 2, 1));
-        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> TestSupport.later(helper, SETTLE_TICKS, () ->
+        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> { floor(helper); place(helper, lit, ORIGIN); addColumn(helper); addTrigger(helper, false); TestSupport.later(helper, SETTLE_TICKS, () ->
             LiveRerunTest.recordAndWatch(helper, level, chat, ORIGIN.offset(LEVER), (rec, watch) -> {
                 try {
                     obsidivision.ghostpath.preview.PathSnapshot before = obsidivision.ghostpath.preview.PathStore.latest();
@@ -508,6 +644,6 @@ public class DustDuperTest {
                     unforce.run();
                     throw e;
                 }
-            }))), 0);
+            })); }), 0);
     }
 }
