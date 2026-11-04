@@ -473,8 +473,8 @@ public final class GhostCopy {
         int blockEntities = copyBlockEntities(real, ghost, chunks, shift);
         BoundingBox box = new BoundingBox(allChunks.getFirst().getMinBlockX(), real.getMinY(), allChunks.getFirst().getMinBlockZ(),
             allChunks.getLast().getMaxBlockX(), real.getMaxY(), allChunks.getLast().getMaxBlockZ());
-        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block", shift, !disk.isEmpty());
-        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid", shift, !disk.isEmpty());
+        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block", shift, !disk.isEmpty(), disk);
+        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid", shift, !disk.isEmpty(), disk);
         // copyAreaFrom renumbers sub-tick order above the source's max (LevelTicks.java:264-269), not from the ghost's
         // own counter (Level.java:1088-1089): move the counter past them, so a tick the ghost schedules later sorts after
         // them, as a new tick does in the real level.
@@ -485,7 +485,7 @@ public final class GhostCopy {
         int blockEvents = 0;
         ObjectLinkedOpenHashSet<BlockEventData> into = ((ServerLevelAccessor) (Object) ghost).ghostpath$blockEvents();
         for (BlockEventData e : ((ServerLevelAccessor) real).ghostpath$blockEvents()) {
-            if (box.isInside(e.pos())) {
+            if (box.isInside(e.pos()) && !disk.contains(ChunkPos.pack(e.pos().getX() >> 4, e.pos().getZ() >> 4))) {
                 into.add(e);
                 blockEvents++;
             }
@@ -631,10 +631,13 @@ public final class GhostCopy {
      * levels ticked), so the containers hold everything; the count is asserted (R3).
      */
     @SuppressWarnings("unchecked")
-    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what, long shift, boolean ghostHasSavedTicks) {
+    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what, long shift, boolean ghostHasSavedTicks, Set<Long> disk) {
         List<ScheduledTick<T>> toAdd = new ArrayList<>();
         for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : ((LevelTicksAccessor<T>) from).ghostpath$allContainers().long2ObjectEntrySet()) {
-            e.getValue().getAll().filter(t -> box.isInside(t.pos())).forEach(toAdd::add);
+            // not the ticks of a chunk the ghost loaded from the save: it brought its own (a chunk that is loaded in the real level but whose
+            // entities are not yet counts as a save chunk too; copying its real ticks as well made them duplicates, dropped by the ghost's
+            // container, and the copy failed with "ticks dropped": the rare widen failure)
+            e.getValue().getAll().filter(t -> box.isInside(t.pos()) && !disk.contains(ChunkPos.pack(t.pos().getX() >> 4, t.pos().getZ() >> 4))).forEach(toAdd::add);
         }
         int before = to.count();
         if (before != 0 && !ghostHasSavedTicks) { // chunks taken from the save arrive with the ticks they were saved with
