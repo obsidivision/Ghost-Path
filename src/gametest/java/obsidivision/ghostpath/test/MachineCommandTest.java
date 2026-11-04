@@ -173,7 +173,9 @@ public class MachineCommandTest {
     }
 
     private static List<String> normalized(Recording r) {
-        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *")).toList();
+        // light reads are not repeatable (DESIGN); chunks reloaded for the restore depend on what else unloaded meanwhile
+        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *")
+            .replaceAll("; chunks loaded again for the restore: \\d+", "")).toList();
     }
 
     private static Map<BlockPos, Set<CauseTracker.ReadKind>> readsWithoutLight(Recording r) {

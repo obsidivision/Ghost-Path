@@ -105,6 +105,10 @@ public abstract class ServerLevelMixin {
         if (tracker != null) {
             tracker.onChunkUnload(chunk);
         }
+        UndoLog log = UndoLog.active();
+        if (log != null) {
+            log.onChunkUnload(chunk); // the restore loads it again (chunks unload normally during a recording, ruling)
+        }
     }
 
     /** 26.2 ServerLevel.java:822 {@code public void tickNonPassenger(Entity)}: one entity's tick, then its passengers'. */

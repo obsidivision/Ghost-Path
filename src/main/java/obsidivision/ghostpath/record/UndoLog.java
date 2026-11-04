@@ -1,6 +1,8 @@
 package obsidivision.ghostpath.record;
 
 import it.unimi.dsi.fastutil.longs.Long2ObjectMap;
+import it.unimi.dsi.fastutil.longs.LongLinkedOpenHashSet;
+import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.objects.ObjectLinkedOpenHashSet;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -63,6 +65,10 @@ import org.slf4j.LoggerFactory;
  * when hurt; container block entities before setItem/removeItem. A block entity first seen at {@code setChanged()}
  * is already changed (vanilla calls it afterwards): it is snapshotted anyway and reported in {@link #lateBlockEntities()}.
  * Not restored: game time and the level random (R4). Players are never touched. Remaining gaps: docs/DESIGN.md.
+ *
+ * <p>Chunks unload normally during a recording (ruling). A chunk that unloaded with changes in it must be loaded again
+ * before {@link #restore()}: {@link #chunksToLoad()} lists them; the caller (MachineRecorder) loads them with a ticket and
+ * waits until their entities are loaded. Spawned entities saved into such a chunk are then found again by UUID and removed.
  */
 public final class UndoLog {
     private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
@@ -98,13 +104,14 @@ public final class UndoLog {
      * minecarts, VehicleEntity damage / hurt time / hurt direction (synced data, VehicleEntity.java:94-107; damage over
      * 40 breaks it, :50).
      */
-    private record EntitySnapshot(CompoundTag tag, int invulnerableTime, float lastHurt, float vehicleDamage, int vehicleHurtTime, int vehicleHurtDir) {
+    private record EntitySnapshot(CompoundTag tag, long chunk, int invulnerableTime, float lastHurt, float vehicleDamage, int vehicleHurtTime, int vehicleHurtDir) {
         static EntitySnapshot of(CompoundTag tag, Entity e) {
             float lastHurt = e instanceof LivingEntity living ? ((LivingEntityAccessor) living).ghostpath$lastHurt() : 0.0F;
+            long chunk = e.chunkPosition().pack();
             if (e instanceof VehicleEntity v) {
-                return new EntitySnapshot(tag, e.invulnerableTime, lastHurt, v.getDamage(), v.getHurtTime(), v.getHurtDir());
+                return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, v.getDamage(), v.getHurtTime(), v.getHurtDir());
             }
-            return new EntitySnapshot(tag, e.invulnerableTime, lastHurt, 0.0F, 0, 0);
+            return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, 0.0F, 0, 0);
         }
 
         void applyTransient(Entity e) {
@@ -133,6 +140,11 @@ public final class UndoLog {
     private final List<BlockEventData> blockEvents = new ArrayList<>();
     private final Set<ScheduledTick<?>> createdTicks = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Set<BlockPos> late = new LinkedHashSet<>();
+    /** Chunks unloaded during the log ({@code ServerLevel.unload}). */
+    private final LongSet unloadedChunks = new LongLinkedOpenHashSet();
+    /** Entities (spawned or snapshotted) unloaded with their chunk during the log: UUID -> chunk they were saved into. */
+    private final Map<UUID, Long> unloadedEntities = new LinkedHashMap<>();
+    private int entitiesNotRestored;
     private long startTime;
     private int ticksNotRestored;
     private boolean busy; // true while we read or write the world ourselves, so our own calls are not logged
@@ -166,6 +178,53 @@ public final class UndoLog {
     /** Ticks from the begin snapshot that could not be put back (their chunk was unloaded or reloaded meanwhile). */
     public int ticksNotRestored() {
         return this.ticksNotRestored;
+    }
+
+    /** Spawned or changed entities that could not be removed or restored because their chunk was not loaded at restore. */
+    public int entitiesNotRestored() {
+        return this.entitiesNotRestored;
+    }
+
+    /** Chunks that unloaded while the log was active. */
+    public LongSet unloadedChunks() {
+        return this.unloadedChunks;
+    }
+
+    /**
+     * Chunks {@link #restore()} needs that are not loaded with their entities now: chunks holding a saved block position,
+     * the original position of a changed entity, a spawned or changed entity that was unloaded with its chunk, or the
+     * begin ticks of a chunk that unloaded. Load them (and wait for their entities) before restoring.
+     */
+    public LongSet chunksToLoad() {
+        LongSet need = new LongLinkedOpenHashSet();
+        for (BlockPos pos : this.blocks.keySet()) {
+            need.add(ChunkPos.containing(pos).pack());
+        }
+        for (EntitySnapshot snap : this.entities.values()) {
+            need.add(snap.chunk());
+        }
+        for (Long chunk : this.unloadedEntities.values()) {
+            need.add(chunk.longValue());
+        }
+        // a chunk that unloaded matters for ticks only if it had ticks at begin or got a tick from the recording
+        LongSet createdIn = new LongLinkedOpenHashSet();
+        for (ScheduledTick<?> t : this.createdTicks) {
+            createdIn.add(ChunkPos.containing(t.pos()).pack());
+        }
+        for (long key : this.unloadedChunks) {
+            TickSnapshot b = this.blockTicks.get(key);
+            TickSnapshot f = this.fluidTicks.get(key);
+            if (b != null && !b.ticks().isEmpty() || f != null && !f.ticks().isEmpty() || createdIn.contains(key)) {
+                need.add(key);
+            }
+        }
+        need.removeIf((long key) -> this.loadedWithEntities(key));
+        return need;
+    }
+
+    public boolean loadedWithEntities(long key) {
+        ChunkPos pos = ChunkPos.unpack(key);
+        return this.level.getChunkSource().getChunkNow(pos.x(), pos.z()) != null && this.level.areEntitiesLoaded(key);
     }
 
     public int blockCount() {
@@ -245,6 +304,24 @@ public final class UndoLog {
         }
     }
 
+    /** {@code ServerLevel.unload(LevelChunk)}: the chunk is being unloaded (and saved) during the recording. */
+    public void onChunkUnload(LevelChunk chunk) {
+        if (chunk.getLevel() == this.level && !this.finished) {
+            this.unloadedChunks.add(chunk.getPos().pack());
+        }
+    }
+
+    /** Before {@code Entity.setRemoved(UNLOADED_TO_CHUNK)}: remember where a spawned or changed entity was saved. */
+    public void onEntityUnloaded(Entity entity) {
+        if (this.finished || entity.level() != this.level) {
+            return;
+        }
+        UUID id = entity.getUUID();
+        if (this.spawnedIds.contains(id) || this.entities.containsKey(id)) {
+            this.unloadedEntities.put(id, entity.chunkPosition().pack());
+        }
+    }
+
     /** After {@code ServerLevel.addEntity} accepted a new entity. */
     public void onEntityAdded(Entity entity) {
         if (this.busy || entity instanceof Player || entity.level() != this.level) {
@@ -280,10 +357,19 @@ public final class UndoLog {
         }
         this.busy = true;
         try {
-            // 1. entities that appeared during the recording
+            // 1. entities that appeared during the recording; one that was unloaded and loaded again is a new object
             for (Entity e : this.spawned) {
                 if (!e.isRemoved()) {
                     e.discard();
+                }
+                Entity reloaded = this.level.getEntity(e.getUUID());
+                if (reloaded != null && reloaded != e && !reloaded.isRemoved()) {
+                    reloaded.discard();
+                } else if (reloaded == null && this.unloadedEntities.containsKey(e.getUUID())
+                    && !this.loadedWithEntities(this.unloadedEntities.get(e.getUUID()))) {
+                    this.entitiesNotRestored++;
+                    LOGGER.warn("[ghostpath] undo log: spawned entity {} is saved in unloaded chunk {} and was not removed", e.getUUID(),
+                        ChunkPos.unpack(this.unloadedEntities.get(e.getUUID())));
                 }
             }
             // 2. blocks, then their block entities
@@ -297,6 +383,13 @@ public final class UndoLog {
             }
             // 3. entities that existed before
             for (Map.Entry<UUID, EntitySnapshot> entry : this.entities.entrySet()) {
+                Long savedIn = this.unloadedEntities.get(entry.getKey());
+                if (this.level.getEntity(entry.getKey()) == null && savedIn != null && !this.loadedWithEntities(savedIn)) {
+                    // the changed copy is in an unloaded chunk: a recreated one would be a duplicate UUID
+                    this.entitiesNotRestored++;
+                    LOGGER.warn("[ghostpath] undo log: entity {} is saved in unloaded chunk {} and was not restored", entry.getKey(), ChunkPos.unpack(savedIn));
+                    continue;
+                }
                 this.restoreEntity(entry.getKey(), entry.getValue());
             }
             // 4. pending ticks and queued block events, as at begin
@@ -324,16 +417,18 @@ public final class UndoLog {
     }
 
     /**
-     * For every chunk that had ticks at begin and still has the same container: drop all its ticks (LevelTicks.clearArea,
-     * 26.2 LevelTicks.java:236-252, which also fixes the container scheduling) and re-add the begin ticks with the same
+     * For every chunk that was loaded at begin and is loaded now (the same container, or a new one if the chunk unloaded
+     * and was loaded again: its saved ticks are the half-run ones): drop all its ticks (LevelTicks.clearArea, 26.2
+     * LevelTicks.java:236-252, which also fixes the container scheduling) and re-add the begin ticks with the same
      * remaining delay, priority and sub-tick order (so their order among themselves and before any later tick holds).
-     * Containers that appeared during the recording are left alone; ticks of a container that went away are counted.
+     * Chunks not loaded at begin keep their ticks except the ones the recording created; ticks of a begin chunk that is
+     * not loaded now are counted as not restored.
      */
     @SuppressWarnings({"unchecked", "rawtypes"})
     private <T> void restoreTicks(LevelTicks<T> ticks, Map<Long, TickSnapshot> snapshot, long now) {
         Long2ObjectMap<LevelChunkTicks<T>> containers = ((LevelTicksAccessor<T>) ticks).ghostpath$allContainers();
         for (Map.Entry<Long, TickSnapshot> e : snapshot.entrySet()) {
-            if (containers.get(e.getKey().longValue()) != e.getValue().container()) {
+            if (containers.get(e.getKey().longValue()) == null) {
                 this.ticksNotRestored += e.getValue().ticks().size();
                 continue;
             }
@@ -342,7 +437,7 @@ public final class UndoLog {
         // chunks loaded during the recording: keep their (saved) ticks, drop only the ones the recording created
         List<Long> newKeys = new ArrayList<>();
         for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : containers.long2ObjectEntrySet()) {
-            if (!snapshot.containsKey(e.getLongKey()) || snapshot.get(e.getLongKey()).container() != e.getValue()) {
+            if (!snapshot.containsKey(e.getLongKey())) {
                 newKeys.add(e.getLongKey());
             }
         }
@@ -354,7 +449,7 @@ public final class UndoLog {
             }
         }
         for (Map.Entry<Long, TickSnapshot> e : snapshot.entrySet()) {
-            if (containers.get(e.getKey().longValue()) != e.getValue().container()) {
+            if (containers.get(e.getKey().longValue()) == null) {
                 continue;
             }
             for (ScheduledTick tick : e.getValue().ticks()) {
@@ -363,7 +458,7 @@ public final class UndoLog {
             }
         }
         if (this.ticksNotRestored > 0) {
-            LOGGER.warn("[ghostpath] undo log: {} pending ticks not restored (their chunk unloaded during the recording)", this.ticksNotRestored);
+            LOGGER.warn("[ghostpath] undo log: {} pending ticks not restored (their chunk is not loaded)", this.ticksNotRestored);
         }
     }
 

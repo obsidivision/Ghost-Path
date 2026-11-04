@@ -25,7 +25,7 @@ public abstract class EntityRandomMixin {
         if (tracker != null && tracker.inChain(level)) {
             return new WatchedRandom(RandomSource.create(tracker.nextEntitySeed()), level, "Entity.random", true);
         }
-        return new WatchedRandom(original, level, "Entity.random", false);
+        return new WatchedRandom(original, level, "Entity.random", false, (Entity) (Object) this);
     }
 
     /**

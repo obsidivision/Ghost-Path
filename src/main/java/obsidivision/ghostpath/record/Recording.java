@@ -36,6 +36,9 @@ import net.minecraft.world.phys.AABB;
  * @param unseededDrawsInexact unseeded draws made inside a tagged mob's tick ("inexact: mob AI"): the run may not repeat exactly
  * @param weatherAtStart  rain and thunder state when the trigger was pressed (ruling: for the ghost)
  * @param weatherAtEnd    the same at the end of the recording (before the restore; weather is not restored)
+ * @param chunksReloaded  chunks that unloaded during the recording and were loaded again for the restore
+ * @param entitiesNotRestored spawned or changed entities left as they were because their chunk could not be loaded in time
+ * @param itemDriftTicks  item ticks counted as "position unchanged" although it moved by less than 1e-6 (settle rule)
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -62,11 +65,14 @@ public record Recording(
     int ticksNotRestored,
     Weather weatherAtStart,
     Weather weatherAtEnd,
+    int chunksReloaded,
+    int entitiesNotRestored,
+    int itemDriftTicks,
     List<String> notFollowed
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
-                        Weather weatherAtEnd) {
+                        Weather weatherAtEnd, int chunksReloaded) {
         int notAllowed = 0;
         int allowed = 0;
         int inexact = 0;
@@ -74,7 +80,7 @@ public record Recording(
             if (e.kind() == ChainEvent.Kind.UNSEEDED_DRAW) {
                 if (e.detail().contains("WARNING: not allowed")) {
                     notAllowed++;
-                } else if (e.detail().endsWith(CauseTracker.INEXACT_MOB_AI)) {
+                } else if (e.detail().endsWith(CauseTracker.INEXACT_MOB_AI) || e.detail().endsWith(CauseTracker.INEXACT_MOB)) {
                     inexact++;
                 } else {
                     allowed++;
@@ -94,7 +100,7 @@ public record Recording(
             notAllowed, allowed, inexact,
             Set.copyOf(undo.lateBlockEntities()),
             undo.ticksNotRestored(),
-            weatherAtStart, weatherAtEnd,
+            weatherAtStart, weatherAtEnd, chunksReloaded, undo.entitiesNotRestored(), tracker.itemDriftTicks(),
             tracker.notFollowed().stream().map(ChainEvent::toString).toList());
     }
 
@@ -118,12 +124,14 @@ public record Recording(
         out.add("TNT spawned: " + this.tntSpawned);
         out.add("Unseeded draws: " + this.unseededDrawsNotAllowed + " warnings"
             + (this.unseededDrawsAllowed > 0 ? " (+" + this.unseededDrawsAllowed + " allowed)" : "")
-            + (this.unseededDrawsInexact > 0 ? " (+" + this.unseededDrawsInexact + " " + CauseTracker.INEXACT_MOB_AI + ")" : ""));
+            + (this.unseededDrawsInexact > 0 ? " (+" + this.unseededDrawsInexact + " inexact: mob)" : ""));
         out.add("Late block entities: " + this.lateBlockEntities.size()
-            + (this.ticksNotRestored > 0 ? "; scheduled ticks not restored: " + this.ticksNotRestored : ""));
+            + (this.ticksNotRestored > 0 ? "; scheduled ticks not restored: " + this.ticksNotRestored : "")
+            + (this.chunksReloaded > 0 ? "; chunks loaded again for the restore: " + this.chunksReloaded : "")
+            + (this.entitiesNotRestored > 0 ? "; entities not restored (chunk not loaded): " + this.entitiesNotRestored : ""));
         out.add("Weather: " + this.weatherAtStart + " at start" + (this.weatherAtEnd.toString().equals(this.weatherAtStart.toString()) ? "" : ", " + this.weatherAtEnd + " at end"));
         if (this.unseededDrawsInexact > 0) {
-            out.add("Inexact: a tagged mob's AI drew from an unseeded random, so the result may not repeat exactly");
+            out.add("Inexact: a mob (its AI, or its own random) drew unseeded numbers, so the result may not repeat exactly");
         }
         if (!this.notFollowed.isEmpty()) {
             // they count as gone for pending(), but the summary names each one (ruling, gaps 2, 7, 8)

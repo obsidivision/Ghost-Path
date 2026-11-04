@@ -141,6 +141,8 @@ public final class CauseTracker {
     /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
     private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
     private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
+    /** Item ticks whose position changed, but by less than {@link #ITEM_STILL_EPSILON}, and so counted as unchanged. */
+    private int itemDriftTicks;
     /** Chain entities whose tick is running now, innermost last (passengers tick inside their vehicle's tick). */
     private final Deque<Entity> ticking = new ArrayDeque<>();
 
@@ -245,12 +247,22 @@ public final class CauseTracker {
     /** A chain block entity counts as busy for this many ticks after chain work last changed it (ruling). */
     public static final int BLOCK_ENTITY_BUSY_TICKS = 8;
 
+    /**
+     * Item settle rule (ruling): on the ground and its position unchanged for this many consecutive ticks of its own
+     * (two full 4-tick cycles of ItemEntity.java:141). Velocity is ignored: it is never zero for a resting item.
+     */
+    public static final int ITEM_SETTLE_TICKS = 8;
+    /** A position change below this on every axis counts as unchanged: the friction-decayed x/z drift (about 1e-8). */
+    public static final double ITEM_STILL_EPSILON = 1.0E-6;
+
     /** Marks an unseeded draw made inside a tagged mob's tick (UNSEEDED_DRAW detail). */
     public static final String INEXACT_MOB_AI = "inexact: mob AI";
+    /** Marks an unseeded draw from a mob's own random outside its tick (UNSEEDED_DRAW detail), e.g. sheared wool. */
+    public static final String INEXACT_MOB = "inexact: mob";
 
     /**
      * Pending chain work: scheduled ticks and block events queued by the chain and not yet run or removed; chain
-     * entities still in the level (an item that has lain still on the ground for two ticks is settled: items stay for
+     * entities still in the level (an item settled on the ground, ITEM_SETTLE_TICKS, does not count: items stay for
      * 6000 ticks and would otherwise keep every recording running); chain block entities still in the level that are
      * busy: a moving piston, a block entity changed in the last {@value #BLOCK_ENTITY_BUSY_TICKS} ticks, or a hopper
      * whose transfer cooldown is above 0 ({@code HopperBlockEntity.cooldownTime}, :38, {@code isOnCooldown} :426-428).
@@ -265,7 +277,7 @@ public final class CauseTracker {
             if (!canHoldOpen(e)) {
                 continue; // living mobs, armor stands, ...: tagged, but never pending (ruling)
             }
-            if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= 2) {
+            if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= ITEM_SETTLE_TICKS) {
                 continue;
             }
             entities++;
@@ -303,6 +315,11 @@ public final class CauseTracker {
     public static boolean canHoldOpen(Entity e) {
         return e instanceof PrimedTnt || e instanceof Projectile || e instanceof ItemEntity || e instanceof VehicleEntity
             || e instanceof FallingBlockEntity;
+    }
+
+    /** Item ticks counted as "unchanged" although the position moved by less than {@link #ITEM_STILL_EPSILON}. */
+    public int itemDriftTicks() {
+        return this.itemDriftTicks;
     }
 
     /** Columns whose heightmap chain work read (a real block change in the column can change the height). */
@@ -653,9 +670,15 @@ public final class CauseTracker {
         Vec3 v = entity.getDeltaMovement();
         if (entity instanceof ItemEntity) {
             Vec3 last = this.lastItemPos.put(entity, p);
-            this.itemRestTicks.put(entity, p.equals(last) ? this.itemRestTicks.getOrDefault(entity, 0) + 1 : 0);
+            boolean still = last != null && Math.abs(p.x - last.x) < ITEM_STILL_EPSILON && Math.abs(p.y - last.y) < ITEM_STILL_EPSILON
+                && Math.abs(p.z - last.z) < ITEM_STILL_EPSILON;
+            if (still && !p.equals(last)) {
+                this.itemDriftTicks++;
+            }
+            this.itemRestTicks.put(entity, still && entity.onGround() ? this.itemRestTicks.getOrDefault(entity, 0) + 1 : 0);
         }
-        this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType())
+        String item = entity instanceof ItemEntity ie ? " item=" + ie.getItem().getCount() + " " + BuiltInRegistries.ITEM.getKey(ie.getItem().getItem()) : "";
+        this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType()) + item
             + " pos=(" + p.x + ", " + p.y + ", " + p.z + ") v=(" + v.x + ", " + v.y + ", " + v.z + ")"
             + (entity.isRemoved() ? " removed" : ""));
     }
@@ -663,16 +686,19 @@ public final class CauseTracker {
     // ---- hooks: randomness ----
 
     /** Chain work drew from an unseeded random ({@code Level.random} or an entity's own); called by {@link WatchedRandom}. */
-    public void onUnseededDraw(String source, String method) {
+    public void onUnseededDraw(String source, String method, @Nullable Entity owner) {
         String[] site = callSite();
         String reason = UnseededDrawAllowlist.reason(site[1]);
         String display = source + "." + method + " at " + site[0];
-        // a draw inside the tick of a tagged mob is its AI (goals, look and stroll targets, ...): inexact, not a warning (ruling)
+        // a draw inside the tick of a tagged mob is its AI (goals, look and stroll targets, ...): inexact, not a warning (ruling);
+        // so is any other draw from a mob's own random (sheared wool spread, Sheep.java:176-178: ruled "inexact: mob")
         boolean mobAi = reason == null && this.ticking.peekLast() instanceof Mob;
-        if (this.unseededSites.merge(display, 1, Integer::sum) == 1 && reason == null && !mobAi) {
+        boolean mobOwn = reason == null && !mobAi && owner instanceof Mob;
+        if (this.unseededSites.merge(display, 1, Integer::sum) == 1 && reason == null && !mobAi && !mobOwn) {
             LOGGER.warn("[ghostpath] unseeded draw by chain work, not on the allowlist: {}", display);
         }
-        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason != null ? " allowed: " + reason : mobAi ? " " + INEXACT_MOB_AI : " WARNING: not allowed"));
+        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason != null ? " allowed: " + reason
+            : mobAi ? " " + INEXACT_MOB_AI : mobOwn ? " " + INEXACT_MOB : " WARNING: not allowed"));
     }
 
     /**

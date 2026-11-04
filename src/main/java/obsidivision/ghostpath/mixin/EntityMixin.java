@@ -31,12 +31,18 @@ public abstract class EntityMixin {
     /** 26.2 Entity.java:3920 {@code public final void setRemoved(Entity.RemovalReason)}. HEAD: still intact. */
     @Inject(method = "setRemoved", at = @At("HEAD"))
     private void ghostpath$beforeRemoved(Entity.RemovalReason reason, CallbackInfo ci) {
-        this.ghostpath$touch();
+        if (reason != Entity.RemovalReason.UNLOADED_TO_CHUNK) {
+            this.ghostpath$touch(); // an unload is not a change: the entity is saved as it is and comes back on load
+        }
         // gaps 7 and 8: UNLOADED_TO_CHUNK (PersistentEntitySectionManager.java:224) and CHANGED_DIMENSION
         // (Entity.removeAfterChangingDimensions, Entity.java:3175) are logged for chain entities
         CauseTracker tracker = CauseTracker.active();
         if (tracker != null) {
             tracker.onEntityRemoved((Entity) (Object) this, reason);
+        }
+        UndoLog log = UndoLog.active();
+        if (log != null && reason == Entity.RemovalReason.UNLOADED_TO_CHUNK) {
+            log.onEntityUnloaded((Entity) (Object) this);
         }
     }
 

@@ -1,6 +1,7 @@
 package obsidivision.ghostpath.record;
 
 import net.minecraft.util.RandomSource;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.PositionalRandomFactory;
 
@@ -17,9 +18,16 @@ public final class WatchedRandom implements RandomSource {
     private final Level level;
     private final String source;
     private final boolean seeded;
+    private final @org.jspecify.annotations.Nullable Entity owner;
 
     /** @param source "Level.random" or "Entity.random", for the event log */
     public WatchedRandom(RandomSource delegate, Level level, String source, boolean seeded) {
+        this(delegate, level, source, seeded, null);
+    }
+
+    /** @param owner the entity whose own random this is (null for a level's) */
+    public WatchedRandom(RandomSource delegate, Level level, String source, boolean seeded, @org.jspecify.annotations.Nullable Entity owner) {
+        this.owner = owner;
         this.delegate = delegate;
         this.level = level;
         this.source = source;
@@ -36,7 +44,7 @@ public final class WatchedRandom implements RandomSource {
         }
         CauseTracker t = CauseTracker.active();
         if (t != null && t.inChain(this.level)) {
-            t.onUnseededDraw(this.source, method);
+            t.onUnseededDraw(this.source, method, this.owner);
         }
     }
 

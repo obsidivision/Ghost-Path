@@ -1,6 +1,9 @@
 package obsidivision.ghostpath.record;
 
+import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.ChunkPos;
+import obsidivision.ghostpath.GhostPath;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.ButtonBlock;
@@ -19,14 +22,26 @@ import org.slf4j.LoggerFactory;
  * scheduled ticks and block events of this tick are done). One recording at a time. The real recording never
  * force-loads a chunk or changes a ticket (R9): the position must already be loaded.
  *
- * <p>Saving is off for the whole recording ({@link SaveGuard}): no autosave writes the half-run machine. It is put back
- * after the restore on every way out (normal end, tick limit, failure, cancel, server stop). A stop request restores
- * first ({@link #abort}). Not covered: {@code /save-all} (forced save) during a recording, and a crash.
+ * <p>Autosave is held for the whole recording and its restore ({@link SaveGuard}); a held save is done right after the
+ * restore. A stop request restores first ({@link #abort}). Not covered: {@code /save-all} (forced save) during a
+ * recording, and a crash.
+ *
+ * <p>Chunks unload normally during a recording (ruling). If one unloaded with changes in it, the recorder does not
+ * restore at once: it loads those chunks with {@link GhostPath#RESTORE_TICKET} (radius 0: FULL, loaded, not ticking)
+ * and waits until their entities are loaded (at most {@link #RESTORE_WAIT_LIMIT_NANOS}, real time), then restores and removes the
+ * tickets. A stop request during the wait restores what is loaded (blocks in unloaded chunks are loaded synchronously by
+ * setBlock; entities saved in them are counted as not restored).
  */
 public final class MachineRecorder {
     private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
     /** The chain seed of every recording; the same machine therefore gives the same run (R1). */
     public static final long SEED = 0x6A05_7FA7_0000_0001L;
+    /**
+     * Longest real time to wait for unloaded chunks (and their entities) to load for the restore; then restore what is
+     * there. Real time, not ticks: loading is asynchronous disk work, and a server that ticks fast (game tests run
+     * without the 50 ms sleep) passes thousands of ticks before a chunk is read (seen: 1200 ticks in under a second).
+     */
+    public static final long RESTORE_WAIT_LIMIT_NANOS = 60_000_000_000L;
 
     /** Reported to whoever started the recording, on the server thread. */
     public interface Listener {
@@ -85,7 +100,7 @@ public final class MachineRecorder {
                 throw e;
             }
         } catch (RuntimeException e) {
-            saves.end();
+            saves.end(false);
             throw e;
         }
         MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather);
@@ -137,6 +152,15 @@ public final class MachineRecorder {
     private final SaveGuard saves;
     private final Weather weatherAtStart;
     private int serverTicks;
+    // set when the recording part is over and the restore waits for chunks
+    private boolean restoring;
+    private int restoreWait;
+    private long restoreStartNanos;
+    private LongSet restoreChunks = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private int endTicks;
+    private boolean endLimitHit;
+    private CauseTracker.@org.jspecify.annotations.Nullable Pending endPending;
+    private @org.jspecify.annotations.Nullable Weather weatherAtEnd;
 
     private MachineRecorder(ServerLevel level, BlockPos trigger, int limit, boolean kick, Listener listener, UndoLog undo,
                             CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart) {
@@ -157,6 +181,23 @@ public final class MachineRecorder {
     }
 
     private void step() {
+        if (this.restoring) {
+            this.restoreWait++;
+            boolean ready = true;
+            for (long key : this.restoreChunks) {
+                ready &= this.undo.loadedWithEntities(key);
+            }
+            boolean late = System.nanoTime() - this.restoreStartNanos > RESTORE_WAIT_LIMIT_NANOS;
+            if (ready || late) {
+                if (!ready) {
+                    LOGGER.warn("[ghostpath] chunks for the restore not loaded after {} ticks (60 s); restoring what is loaded", this.restoreWait);
+                } else {
+                    LOGGER.info("[ghostpath] chunks for the restore loaded after {} ticks", this.restoreWait);
+                }
+                this.finish();
+            }
+            return;
+        }
         this.serverTicks++;
         CauseTracker.Pending pending = this.tracker.pending();
         boolean limitHit = pending.any() && this.serverTicks >= this.limit;
@@ -164,23 +205,48 @@ public final class MachineRecorder {
             return;
         }
         // game time, not server ticks, is what the events are counted in; a frozen game (/tick freeze) still ends at the limit
-        int ticks = (int) (this.level.getGameTime() - this.startTime);
-        Weather weatherAtEnd = Weather.of(this.level);
+        this.endTicks = (int) (this.level.getGameTime() - this.startTime);
+        this.endLimitHit = limitHit;
+        this.endPending = pending;
+        this.weatherAtEnd = Weather.of(this.level);
         this.tracker.end();
+        this.restoreChunks = this.undo.chunksToLoad();
+        if (this.restoreChunks.isEmpty()) {
+            this.finish();
+            return;
+        }
+        LOGGER.info("[ghostpath] {} chunks unloaded during the recording; loading them for the restore: {}", this.restoreChunks.size(),
+            this.restoreChunks.longStream().mapToObj(ChunkPos::unpack).toList());
+        for (long key : this.restoreChunks) {
+            this.level.getChunkSource().addTicketWithRadius(GhostPath.RESTORE_TICKET, ChunkPos.unpack(key), 0);
+        }
+        this.restoring = true;
+        this.restoreStartNanos = System.nanoTime();
+    }
+
+    private void removeRestoreTickets() {
+        for (long key : this.restoreChunks) {
+            this.level.getChunkSource().removeTicketWithRadius(GhostPath.RESTORE_TICKET, ChunkPos.unpack(key), 0);
+        }
+    }
+
+    private void finish() {
         Recording recording;
         try {
             this.undo.restore();
-            recording = Recording.of(this.tracker, this.undo, this.trigger, ticks, this.limit, limitHit, pending, this.kick, SEED, this.startTime,
-                this.weatherAtStart, weatherAtEnd);
+            recording = Recording.of(this.tracker, this.undo, this.trigger, this.endTicks, this.limit, this.endLimitHit, this.endPending, this.kick,
+                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size());
         } catch (RuntimeException e) {
             current = null;
-            this.saves.end();
+            this.removeRestoreTickets();
+            this.saves.end(true);
             LOGGER.error("[ghostpath] restoring the world after the recording failed", e);
             this.listener.failed("restoring the world failed: " + e);
             return;
         }
         current = null;
-        this.saves.end();
+        this.removeRestoreTickets();
+        this.saves.end(true);
         RecordingStore.set(recording);
         this.listener.done(recording);
     }
@@ -192,7 +258,8 @@ public final class MachineRecorder {
             this.undo.restore();
         } finally {
             current = null;
-            this.saves.end();
+            this.removeRestoreTickets();
+            this.saves.end(false);
         }
     }
 }
