@@ -67,7 +67,19 @@ public final class PathRenderer {
         return Math.floorMod(tick - offset, (long) Math.max(1, interval)) == 0;
     }
 
+    /** Client-thread time spent submitting the paths (render() only), summed over {@link #framesDrawn} frames: for the client test's frame-time report. */
+    public static volatile long totalNanos;
+
     static void render() {
+        long t0 = System.nanoTime();
+        try {
+            draw();
+        } finally {
+            totalNanos += System.nanoTime() - t0;
+        }
+    }
+
+    private static void draw() {
         if (!PathSettings.showPaths) {
             return;
         }

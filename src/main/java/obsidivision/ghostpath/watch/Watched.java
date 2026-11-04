@@ -23,6 +23,8 @@ public final class Watched {
     boolean dirty;
     /** Server tick of the last footprint change. */
     long lastChange;
+    /** What the last change was (for /path watch list). */
+    String lastWhat = "-";
     int changes;
     int reruns;
     int cancelled;

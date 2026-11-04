@@ -127,7 +127,7 @@ public final class LiveWatch {
         for (Watched w : WATCHES) {
             out.add("#" + i++ + " " + w.trigger().toShortString() + ": " + w.status() + "; reruns " + w.reruns()
                 + (w.cancelled() > 0 ? ", cancelled " + w.cancelled() : "") + (w.failures() > 0 ? ", failed " + w.failures() : "")
-                + "; footprint " + w.footprint() + "; last area " + w.lastArea());
+                + "; footprint " + w.footprint() + "; last area " + w.lastArea() + "; last change: " + w.lastWhat);
             Prediction p = w.latest();
             if (p != null) {
                 out.add("   last rerun: " + p.ticks() + " ticks, " + p.tntSpawned() + " TNT" + (p.tntSpawnTicks().isEmpty() ? "" : " (spawn t+"
@@ -156,7 +156,7 @@ public final class LiveWatch {
         }
         for (Watched w : WATCHES) {
             if (level.dimension().equals(w.recording().dimension()) && w.footprint.hit(pos)) {
-                markChanged(w);
+                markChanged(w, "block at " + pos.toShortString() + " is now " + level.getBlockState(pos));
             }
         }
     }
@@ -173,7 +173,7 @@ public final class LiveWatch {
         BlockPos pos = be.getBlockPos();
         for (Watched w : WATCHES) {
             if (level.dimension().equals(w.recording().dimension()) && w.footprint.containsPosition(pos)) {
-                markChanged(w);
+                markChanged(w, "container at " + pos.toShortString());
             }
         }
     }
@@ -183,7 +183,8 @@ public final class LiveWatch {
         return WATCHES.isEmpty() || MachineRecorder.current() != null || UndoLog.active() != null;
     }
 
-    private static void markChanged(Watched w) {
+    private static void markChanged(Watched w, String what) {
+        w.lastWhat = what;
         w.dirty = true;
         w.lastChange = serverTick;
         w.changes++;
@@ -284,7 +285,7 @@ public final class LiveWatch {
             ServerLevel level = server.getLevel(w.recording().dimension());
             if (level != null && w.entities.scan(level, w.footprint)) {
                 w.entityChanges++;
-                markChanged(w);
+                markChanged(w, "entity change");
             }
         }
     }

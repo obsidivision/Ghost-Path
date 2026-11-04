@@ -9,7 +9,8 @@
       "obsidivision.ghostpath.test.ClientPreviewGameTest",
       "obsidivision.ghostpath.test.GizmoVisibilityGameTest",
       "obsidivision.ghostpath.test.ContinuationEffectsGameTest",
-      "obsidivision.ghostpath.test.InspectorGameTest"
+      "obsidivision.ghostpath.test.InspectorGameTest",
+      "obsidivision.ghostpath.test.ClientDuperGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",
@@ -27,7 +28,8 @@
       "obsidivision.ghostpath.test.LiveRerunTest",
       "obsidivision.ghostpath.test.LiveRerunRulingsTest",
       "obsidivision.ghostpath.test.FlightPreviewTest",
-      "obsidivision.ghostpath.test.InspectorTest"
+      "obsidivision.ghostpath.test.InspectorTest",
+      "obsidivision.ghostpath.test.DustDuperTest"
     ]
   },
   "depends": {
