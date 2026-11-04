@@ -4,6 +4,8 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.VanillaHudElements;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -20,10 +22,16 @@ import obsidivision.ghostpath.PathSettings;
 public class GhostPathClient implements ClientModInitializer {
     public static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Identifier.fromNamespaceAndPath("ghostpath", "main"));
     public static final KeyMapping TOGGLE = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ghostpath.toggle", InputConstants.KEY_G, CATEGORY));
+    /** Hold: the inspector's ray goes through blocks; with it, a click pins or unpins the hovered path point and the scroll wheel steps through a stack. */
+    public static final KeyMapping INSPECT = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ghostpath.inspect", InputConstants.KEY_V, CATEGORY));
 
     @Override
     public void onInitializeClient() {
-        LevelRenderEvents.BEFORE_GIZMOS.register(context -> PathRenderer.render());
+        LevelRenderEvents.BEFORE_GIZMOS.register(context -> {
+            PathRenderer.render();
+            Inspector.render();
+        });
+        HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "inspector"), (graphics, deltaTracker) -> Inspector.hud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (TOGGLE.consumeClick()) {
                 PathSettings.showPaths = !PathSettings.showPaths;
@@ -32,6 +40,7 @@ public class GhostPathClient implements ClientModInitializer {
                 }
             }
             Tails.tick(Minecraft.getInstance());
+            Inspector.tick(Minecraft.getInstance());
         });
     }
 }

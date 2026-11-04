@@ -274,6 +274,7 @@ public class FlightPreviewTest {
         PathStore.clear();
         obsidivision.ghostpath.record.RecordingStore.clear();
         TestSupport.removeBarriers(helper);
+        Runnable unforce = TestSupport.forceAround(helper, 2);
         for (int x = 0; x < 8; x++) {
             for (int z = 0; z < 6; z++) {
                 helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
@@ -292,16 +293,20 @@ public class FlightPreviewTest {
         TestSupport.whenSavesFree(helper, () -> whenTicking(helper, lever, () -> {
             MachineCommandTest.Capture out = new MachineCommandTest.Capture();
             MachineCommandTest.runCommand(helper, level, out, lever, () -> {
-                Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
-                helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
-                PathSnapshot s = PathStore.latest();
-                helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
-                PathSnapshot.Line l = s.lines().getFirst();
-                helper.assertTrue(l.type().equals("minecraft:snowball") && l.end().reason().equals("hit block") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
-                double wallFace = helper.absolutePos(new BlockPos(6, 2, 2)).getX();
-                helper.assertTrue(Math.abs(l.end().x() - wallFace) < 0.2, "ends at x=" + l.end().x() + ", the wall's face is x=" + wallFace);
-                LOG.info("[ghostpath] hit: snowball t+{}..t+{}, {} points, ends {} at x={}", l.startTick(), l.end().tick(), l.points(), l.end().reason(), l.end().x());
-                helper.succeed();
+                try {
+                    Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
+                    helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
+                    PathSnapshot s = PathStore.latest();
+                    helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
+                    PathSnapshot.Line l = s.lines().getFirst();
+                    helper.assertTrue(l.type().equals("minecraft:snowball") && l.end().reason().equals("hit block") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
+                    double wallFace = helper.absolutePos(new BlockPos(6, 2, 2)).getX();
+                    helper.assertTrue(Math.abs(l.end().x() - wallFace) < 0.2, "ends at x=" + l.end().x() + ", the wall's face is x=" + wallFace);
+                    LOG.info("[ghostpath] hit: snowball t+{}..t+{}, {} points, ends {} at x={}", l.startTick(), l.end().tick(), l.points(), l.end().reason(), l.end().x());
+                    helper.succeed();
+                } finally {
+                    unforce.run();
+                }
             });
         }));
     }
@@ -319,6 +324,7 @@ public class FlightPreviewTest {
         PathStore.clear();
         obsidivision.ghostpath.record.RecordingStore.clear();
         TestSupport.removeBarriers(helper);
+        Runnable unforce = TestSupport.forceAround(helper, 2);
         for (int x = 0; x < 8; x++) {
             for (int z = 0; z < 6; z++) {
                 helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
@@ -332,16 +338,20 @@ public class FlightPreviewTest {
         TestSupport.whenSavesFree(helper, () -> whenTicking(helper, lever, () -> {
             MachineCommandTest.Capture out = new MachineCommandTest.Capture();
             MachineCommandTest.runCommand(helper, level, out, lever, () -> {
-                Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
-                helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
-                PathSnapshot s = PathStore.latest();
-                helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
-                PathSnapshot.Line l = s.lines().getFirst();
-                helper.assertTrue(l.type().equals("minecraft:arrow") && l.end().reason().equals("stuck") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
-                helper.assertTrue(r.ticks() <= l.end().tick() + obsidivision.ghostpath.record.CauseTracker.ARROW_SETTLE_TICKS + 4,
-                    "the recording ran " + r.ticks() + " ticks, the arrow stuck at t+" + l.end().tick());
-                LOG.info("[ghostpath] stuck: arrow t+{}..t+{}, ends {}, recording {} ticks", l.startTick(), l.end().tick(), l.end().reason(), r.ticks());
-                helper.succeed();
+                try {
+                    Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
+                    helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
+                    PathSnapshot s = PathStore.latest();
+                    helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
+                    PathSnapshot.Line l = s.lines().getFirst();
+                    helper.assertTrue(l.type().equals("minecraft:arrow") && l.end().reason().equals("stuck") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
+                    helper.assertTrue(r.ticks() <= l.end().tick() + obsidivision.ghostpath.record.CauseTracker.ARROW_SETTLE_TICKS + 4,
+                        "the recording ran " + r.ticks() + " ticks, the arrow stuck at t+" + l.end().tick());
+                    LOG.info("[ghostpath] stuck: arrow t+{}..t+{}, ends {}, recording {} ticks", l.startTick(), l.end().tick(), l.end().reason(), r.ticks());
+                    helper.succeed();
+                } finally {
+                    unforce.run();
+                }
             });
         }));
     }

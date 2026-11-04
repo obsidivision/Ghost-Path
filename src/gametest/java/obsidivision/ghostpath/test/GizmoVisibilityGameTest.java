@@ -90,6 +90,12 @@ public class GizmoVisibilityGameTest implements FabricClientGameTest {
             int yellowBefore = ClientShots.count(none, c -> ClientShots.r(c) > 200 && ClientShots.g(c) > 200 && ClientShots.b(c) < 60);
             LOG.info("[ghostpath] gizmo visibility: vanilla F3+G / F3+B: yellow pixels {} (before {})", yellow, yellowBefore);
             check(yellow > yellowBefore + 50, "vanilla's chunk borders are not in the capture: yellow " + yellow + " (before " + yellowBefore + ")");
+            // client options outlive the world in this JVM: leave them as they were for the next test
+            context.runOnClient(c -> {
+                c.debugEntries.setStatus(DebugScreenEntries.CHUNK_BORDERS, DebugScreenEntryStatus.NEVER);
+                c.debugEntries.setStatus(DebugScreenEntries.ENTITY_HITBOXES, DebugScreenEntryStatus.NEVER);
+                c.debugEntries.setOverlayVisible(false);
+            });
         }
     }
 

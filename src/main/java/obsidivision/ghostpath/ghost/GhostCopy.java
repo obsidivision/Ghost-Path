@@ -178,7 +178,7 @@ public final class GhostCopy {
 
         /** Runs the ghost's own pending chunk and entity-section work once; true when the ghost chunks match the real ones. */
         public boolean poll() {
-            this.ghost.pollOnce();
+            this.ghost.pollSlice(POLL_SLICE_NANOS);
             return this.reached();
         }
 
@@ -203,6 +203,13 @@ public final class GhostCopy {
             return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start);
         }
     }
+
+    /**
+     * How long one {@link Prepared#poll} keeps running the ghost's own pending tasks. Loading a ghost chunk is a chain of main-thread
+     * tasks (each chunk status, the light, the entity section); one task per server tick is fast enough in the game tests, which
+     * tick as fast as they can, but at the real 20 ticks a second the chain of a few chunks would take longer than the wait limit.
+     */
+    static final long POLL_SLICE_NANOS = 4_000_000L;
 
     /** Checks the rectangle, marks the ghost as copied into and adds the tickets (no waiting). */
     public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {

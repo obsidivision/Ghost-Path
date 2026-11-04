@@ -817,10 +817,15 @@ public final class CauseTracker {
 
     /**
      * One chain entity at one tick: after its own tick (or, for the first point of an entity, where it was added). Exact
-     * doubles. {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
+     * doubles; {@code box} is its bounding box then (step 6, the inspector), {@code fuse} a primed TNT's remaining fuse (else -1). {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
      */
     public record FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
-                              boolean onGround, boolean removed, boolean portal) {
+                              boolean onGround, boolean removed, boolean portal, @Nullable AABB box, int fuse) {
+        /** Without the bounding box and the fuse (tests; the builder then uses a box of no size at the position and fuse -1). */
+        public FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
+                           boolean onGround, boolean removed, boolean portal) {
+            this(tick, index, type, kind, x, y, z, vx, vy, vz, onGround, removed, portal, null, -1);
+        }
     }
 
     /** Why a chain entity's path ended or what it hit: "hit block", "hit entity" (projectiles), "removed KILLED", "removed UNLOADED_TO_CHUNK", ... */
@@ -831,7 +836,7 @@ public final class CauseTracker {
         Vec3 p = e.position();
         Vec3 v = e.getDeltaMovement();
         this.flightPoints.add(new FlightPoint(this.level.getGameTime() - this.startTime, index, EntityType.getKey(e.getType()).toString(), FlightKind.of(e),
-            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null));
+            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null, e.getBoundingBox(), e instanceof PrimedTnt tnt ? tnt.getFuse() : -1));
     }
 
     /** {@code Projectile.hitTargetOrDeflectSelf}, before it runs: a chain projectile hit a block or an entity. */

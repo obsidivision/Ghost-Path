@@ -4,6 +4,8 @@
   "compatibilityLevel": "JAVA_25",
   "client": [
     "ClientLevelPreviewMixin",
+    "MinecraftInspectMixin",
+    "MouseHandlerInspectMixin",
     "ParticleEngineGuardMixin",
     "SoundManagerGuardMixin"
   ],

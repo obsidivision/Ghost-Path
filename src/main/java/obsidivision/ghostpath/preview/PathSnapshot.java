@@ -23,11 +23,21 @@ public record PathSnapshot(long serial, String source, String dimension, int tic
     /**
      * One path (or several identical ones, {@code count}): the chain entity's position after each of its ticks, from the
      * tick it was added. {@code ticks[i]} is the tick relative to the start of the recording, {@code xyz[3i..3i+2]} the
-     * position (exact doubles).
+     * position (exact doubles). For the inspector (step 6), per point: {@code vel[3i..3i+2]} the velocity after the tick,
+     * {@code box[6i..6i+5]} the bounding box (minX, minY, minZ, maxX, maxY, maxZ), {@code fuse[i]} a primed TNT's fuse (else -1).
+     * {@code members}: the chain entity indices of the identical paths merged into this line ({@code count} of them, in order);
+     * an index is the entity's place in the order the chain created entities, the same in a rerun, so a pin finds it again.
      */
-    public record Line(String type, FlightKind kind, int count, long startTick, long[] ticks, double[] xyz, End end, @Nullable Tail tail) {
+    public record Line(String type, FlightKind kind, int count, long startTick, long[] ticks, double[] xyz, double[] vel, double[] box, int[] fuse, int[] members,
+                       End end, @Nullable Tail tail) {
         public int points() {
             return this.ticks.length;
+        }
+
+        /** Index of the point at {@code tick}, or -1 (ticks are strictly increasing, one point each). */
+        public int indexOfTick(long tick) {
+            int i = java.util.Arrays.binarySearch(this.ticks, tick);
+            return i >= 0 ? i : -1;
         }
     }
 

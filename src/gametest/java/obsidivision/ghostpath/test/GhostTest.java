@@ -248,6 +248,56 @@ public class GhostTest {
 
     // ---- helpers ----
 
+    /**
+     * Found on the real client (step 6 session): a live rerun waits for its ghost chunks without blocking, one {@code poll()} per
+     * server tick, and at the real 20 ticks a second the loader's chain of main-thread tasks (one task per poll then) took longer
+     * than the 20 s wait limit: "rerun failed: timed out waiting for the ghost chunks". The game tests tick as fast as they can, so
+     * they never saw it. A poll now runs the ghost's pending tasks for a few milliseconds: the copy of a 3x3 chunk area must be
+     * ready within a few dozen polls (ticks; about 42 here). With one task per poll it was not ready after 3000 (break-it checked).
+     */
+    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:ghost_poll")
+    public void ghostChunksAreReadyWithinAFewPolls(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        ChunkRect rect = ChunkRect.around(helper, new BlockPos(0, 0, 0), new BlockPos(4, 0, 4));
+        rect.force(level, true);
+        whenLoaded(helper, rect, 0, () -> TestSupport.whenSavesFree(helper, () -> {
+            GhostLevel ghost = newGhost(helper, level);
+            GhostCopy.Prepared prepared;
+            try {
+                prepared = GhostCopy.prepare(level, ghost, rect.copyMin(), rect.copyMax(), GhostCopy.Start.NOW);
+            } catch (RuntimeException e) {
+                ghost.discard();
+                throw e;
+            }
+            pollEachTick(helper, ghost, prepared, new int[] {0}, rect);
+        }));
+    }
+
+    private static void pollEachTick(GameTestHelper helper, GhostLevel ghost, GhostCopy.Prepared prepared, int[] polls, ChunkRect rect) {
+        polls[0]++;
+        boolean ready;
+        try {
+            ready = prepared.poll();
+        } catch (RuntimeException e) {
+            ghost.discard();
+            rect.force(helper.getLevel(), false);
+            throw e;
+        }
+        if (ready) {
+            ghost.discard();
+            rect.force(helper.getLevel(), false);
+            LOG.info("[ghostpath] ghost chunks ready after {} polls (one per tick)", polls[0]);
+            helper.assertTrue(polls[0] <= 150, "the ghost chunks needed " + polls[0] + " polls (one per server tick); at 20 ticks a second the wait limit (20 s) is 400, and the old one-task-per-poll code did not finish in 3000");
+            helper.succeed();
+        } else if (polls[0] > 3000) {
+            ghost.discard();
+            rect.force(helper.getLevel(), false);
+            helper.fail("the ghost chunks were not ready after " + polls[0] + " polls");
+        } else {
+            helper.runAfterDelay(1, () -> pollEachTick(helper, ghost, prepared, polls, rect));
+        }
+    }
+
     private static GhostLevel newGhost(GameTestHelper helper, ServerLevel level) {
         try {
             return GhostLevel.create(level);

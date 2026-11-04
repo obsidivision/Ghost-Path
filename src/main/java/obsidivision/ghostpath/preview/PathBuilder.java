@@ -11,6 +11,7 @@ import obsidivision.ghostpath.record.CauseTracker.FlightPoint;
 import obsidivision.ghostpath.record.CauseTracker.LiveEntity;
 import obsidivision.ghostpath.record.Recording;
 import obsidivision.ghostpath.watch.Prediction;
+import net.minecraft.world.phys.AABB;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -72,7 +73,14 @@ public final class PathBuilder {
             PathSnapshot.Line line = line(en.getValue(), notesBy.getOrDefault(en.getKey(), List.of()), liveBy.get(en.getKey()), limitHit);
             Key key = new Key(line);
             PathSnapshot.Line old = merged.get(key);
-            merged.put(key, old == null ? line : new PathSnapshot.Line(old.type(), old.kind(), old.count() + 1, old.startTick(), old.ticks(), old.xyz(), old.end(), old.tail()));
+            if (old == null) {
+                merged.put(key, line);
+            } else {
+                int[] members = Arrays.copyOf(old.members(), old.members().length + 1);
+                members[members.length - 1] = en.getKey();
+                merged.put(key, new PathSnapshot.Line(old.type(), old.kind(), old.count() + 1, old.startTick(), old.ticks(), old.xyz(), old.vel(), old.box(), old.fuse(), members,
+                    old.end(), old.tail()));
+            }
         }
         return new PathSnapshot(serial, source, dimension, ticks, limitHit, List.copyOf(merged.values()));
     }
@@ -152,18 +160,32 @@ public final class PathBuilder {
         }
         long[] ticks = new long[cut.size()];
         double[] xyz = new double[cut.size() * 3];
+        double[] vel = new double[cut.size() * 3];
+        double[] box = new double[cut.size() * 6];
+        int[] fuse = new int[cut.size()];
         for (int i = 0; i < cut.size(); i++) {
             FlightPoint p = cut.get(i);
             ticks[i] = p.tick();
             xyz[3 * i] = p.x();
             xyz[3 * i + 1] = p.y();
             xyz[3 * i + 2] = p.z();
+            vel[3 * i] = p.vx();
+            vel[3 * i + 1] = p.vy();
+            vel[3 * i + 2] = p.vz();
+            AABB b = p.box();
+            box[6 * i] = b == null ? p.x() : b.minX;
+            box[6 * i + 1] = b == null ? p.y() : b.minY;
+            box[6 * i + 2] = b == null ? p.z() : b.minZ;
+            box[6 * i + 3] = b == null ? p.x() : b.maxX;
+            box[6 * i + 4] = b == null ? p.y() : b.maxY;
+            box[6 * i + 5] = b == null ? p.z() : b.maxZ;
+            fuse[i] = p.fuse();
         }
         FlightPoint last = cut.getLast();
         PathSnapshot.End end = new PathSnapshot.End(reason, last.tick(), last.x(), last.y(), last.z());
         PathSnapshot.Tail tail = reason.equals("limit") && kind == FlightKind.PROJECTILE && live != null
             ? new PathSnapshot.Tail(live.type(), live.nbt().copy(), live.tickCount(), live.xo(), live.yo(), live.zo(), live.onGround()) : null;
-        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, end, tail);
+        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, vel, box, fuse, new int[] {cut.getFirst().index()}, end, tail);
     }
 
     private static String removal(FlightKind kind, String what) {

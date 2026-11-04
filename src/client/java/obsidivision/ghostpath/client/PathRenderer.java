@@ -34,7 +34,7 @@ public final class PathRenderer {
     private PathRenderer() {
     }
 
-    static int color(FlightKind kind) {
+    public static int color(FlightKind kind) {
         return switch (kind) {
             case TNT -> 0xFFFF5050;
             case PROJECTILE -> 0xFF50D8FF;
@@ -54,7 +54,7 @@ public final class PathRenderer {
     }
 
     /** Height of the point the line goes through above the entity's feet. */
-    static double lift(FlightKind kind) {
+    public static double lift(FlightKind kind) {
         return switch (kind) {
             case TNT, FALLING_BLOCK -> 0.49;
             case VEHICLE -> 0.3;
@@ -96,15 +96,15 @@ public final class PathRenderer {
             segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued);
             Vec3 start = at(l.xyz(), 0, up);
             if (l.count() > 1) {
-                Gizmos.billboardText("×" + l.count(), start.add(0.0, 0.3, 0.0), TextGizmo.Style.forColorAndCentered(color));
+                label("×" + l.count(), start.add(0.0, 0.3, 0.0), color);
             }
             Vec3 end = at(l.xyz(), n - 1, up);
             if (job == null) {
-                Gizmos.billboardText(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), TextGizmo.Style.forColorAndCentered(color));
+                label(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), color);
             } else {
                 // the ghost run stopped here at the tick limit; the rest is the client's own continuation
                 Gizmos.point(end, color, END_DOT_SIZE);
-                Gizmos.billboardText(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), TextGizmo.Style.forColorAndCentered(color));
+                label(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), color);
                 int m = job.points();
                 if (m > 0) {
                     long[] ticks = job.ticks.toLongArray();
@@ -120,11 +120,21 @@ public final class PathRenderer {
                     segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true);
                     Vec3 last = at(xyz, m, up);
                     String why = job.done() ? job.endReason() + " t+" + all[m] : "continuing... t+" + all[m];
-                    Gizmos.billboardText("continued: " + why, last.add(0.0, 0.3, 0.0), TextGizmo.Style.forColorAndCentered(light));
+                    label("continued: " + why, last.add(0.0, 0.3, 0.0), light);
                 }
             }
         }
         lastSegments = MAX_SEGMENTS - budget[0];
+    }
+
+    /**
+     * A label that stays readable: gizmo text has a fixed size in the world, tiny at 35 blocks (seen in a capture), so it grows with the
+     * distance from 12 blocks (its normal size) up to 3 times that at 36 blocks and beyond.
+     */
+    public static void label(String text, Vec3 pos, int color) {
+        double dist = Minecraft.getInstance().gameRenderer.mainCamera().position().distanceTo(pos);
+        float scale = (float) Math.max(1.0, Math.min(3.0, dist / 12.0));
+        Gizmos.billboardText(text, pos, TextGizmo.Style.forColorAndCentered(color).withScale(scale));
     }
 
     private static Vec3 at(double[] xyz, int i, double up) {

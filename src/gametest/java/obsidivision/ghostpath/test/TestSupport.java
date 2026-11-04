@@ -1,7 +1,11 @@
 package obsidivision.ghostpath.test;
 
+import java.util.ArrayList;
+import java.util.List;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 
@@ -69,5 +73,28 @@ final class TestSupport {
                 helper.getLevel().setBlock(pos, Blocks.AIR.defaultBlockState(), 2);
             }
         }
+    }
+
+    /**
+     * Force-loads the chunks within {@code radius} chunks of the test structure, which makes them entity ticking (forced tickets
+     * are level 31). A projectile that flies out of the structure's chunk would otherwise stop being ticked in the neighbour
+     * chunk (the structure sits at a different chunk offset in every run) and hold a recording open until the limit. Returns the
+     * undo: it unforces what it forced. Test setup only: a real recording never changes tickets (R9).
+     */
+    static Runnable forceAround(GameTestHelper helper, int radius) {
+        ServerLevel level = helper.getLevel();
+        BlockPos centre = helper.absolutePos(new BlockPos(0, 0, 0));
+        int cx = centre.getX() >> 4;
+        int cz = centre.getZ() >> 4;
+        List<long[]> forced = new ArrayList<>();
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                if (!level.getForceLoadedChunks().contains(ChunkPos.pack(cx + dx, cz + dz))) {
+                    level.setChunkForced(cx + dx, cz + dz, true);
+                    forced.add(new long[] {cx + dx, cz + dz});
+                }
+            }
+        }
+        return () -> forced.forEach(c -> level.setChunkForced((int) c[0], (int) c[1], false));
     }
 }
