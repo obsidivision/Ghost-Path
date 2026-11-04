@@ -15,7 +15,8 @@
       "obsidivision.ghostpath.test.FootprintVariationTest",
       "obsidivision.ghostpath.test.MachineCommandTest",
       "obsidivision.ghostpath.test.ChainGapsTest",
-      "obsidivision.ghostpath.test.RecordingRulesTest"
+      "obsidivision.ghostpath.test.RecordingRulesTest",
+      "obsidivision.ghostpath.test.GhostTest"
     ]
   },
   "depends": {

@@ -23,6 +23,15 @@ public class GhostPath implements ModInitializer {
      */
     public static final TicketType RESTORE_TICKET = Registry.register(BuiltInRegistries.TICKET_TYPE,
         Identifier.fromNamespaceAndPath(MOD_ID, "restore"), new TicketType(0L, TicketType.FLAG_LOADING));
+    /**
+     * Ghost copies of the real chunk ticket levels (ruling R2: copied, not forced): one loading and one simulation ticket
+     * per copied chunk, at the real chunk's loading and simulation level (TicketStorage.java:158-203 keeps the two apart
+     * by these flags). No timeout, not persistent; the ghost's ticket storage is throwaway anyway.
+     */
+    public static final TicketType GHOST_LOADING_TICKET = Registry.register(BuiltInRegistries.TICKET_TYPE,
+        Identifier.fromNamespaceAndPath(MOD_ID, "ghost_loading"), new TicketType(0L, TicketType.FLAG_LOADING));
+    public static final TicketType GHOST_SIMULATION_TICKET = Registry.register(BuiltInRegistries.TICKET_TYPE,
+        Identifier.fromNamespaceAndPath(MOD_ID, "ghost_simulation"), new TicketType(0L, TicketType.FLAG_SIMULATION));
 
     @Override
     public void onInitialize() {

@@ -21,4 +21,16 @@ public interface LevelWeatherAccessor {
 
     @Accessor("thunderLevel")
     float ghostpath$thunderLevel();
+
+    @Accessor("oRainLevel")
+    void ghostpath$setORainLevel(float value);
+
+    @Accessor("rainLevel")
+    void ghostpath$setRainLevel(float value);
+
+    @Accessor("oThunderLevel")
+    void ghostpath$setOThunderLevel(float value);
+
+    @Accessor("thunderLevel")
+    void ghostpath$setThunderLevel(float value);
 }

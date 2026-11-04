@@ -34,6 +34,11 @@ public final class WatchedRandom implements RandomSource {
         this.seeded = seeded;
     }
 
+    /** The wrapped random (its state is what a ghost copy continues from). */
+    public RandomSource delegate() {
+        return this.delegate;
+    }
+
     public boolean seeded() {
         return this.seeded;
     }

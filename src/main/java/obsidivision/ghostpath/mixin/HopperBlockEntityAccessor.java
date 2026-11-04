@@ -9,4 +9,11 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface HopperBlockEntityAccessor {
     @Accessor("cooldownTime")
     int ghostpath$cooldownTime();
+
+    /** 26.2 HopperBlockEntity.java:39 {@code tickedGameTime}: not saved; decides whether a pushed-into hopper gets the shorter cooldown (:334). */
+    @Accessor("tickedGameTime")
+    long ghostpath$tickedGameTime();
+
+    @Accessor("tickedGameTime")
+    void ghostpath$setTickedGameTime(long value);
 }
