@@ -29,6 +29,11 @@ public final class PathSettings {
     /** The dots sit at ticks where (tick - offset) is a multiple of the interval. */
     public static volatile int dotOffset = 0;
 
+    /** {@code /path inspect hold|toggle}: whether the inspect key works while it is held (default) or each press switches it on or off. */
+    public static volatile boolean inspectToggle = false;
+    /** {@code /path pins clear}: raised each time; the client clears its pins when it sees a new value. */
+    public static volatile int pinsClearSerial = 0;
+
     private PathSettings() {
     }
 }

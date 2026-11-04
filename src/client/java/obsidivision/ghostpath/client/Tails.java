@@ -48,6 +48,9 @@ public final class Tails {
         /** Tick (relative to the recording) of the first continued point is {@code line.end().tick() + 1}. */
         public final LongArrayList ticks = new LongArrayList();
         public final DoubleArrayList xyz = new DoubleArrayList();
+        /** Velocity (3 doubles) and bounding box (6 doubles) of the copy after each continued tick, for the inspector. */
+        public final DoubleArrayList vel = new DoubleArrayList();
+        public final DoubleArrayList box = new DoubleArrayList();
         private @Nullable Entity copy;
         private int run;
         private @Nullable String endReason;
@@ -99,6 +102,17 @@ public final class Tails {
             this.xyz.add(p.x);
             this.xyz.add(p.y);
             this.xyz.add(p.z);
+            Vec3 v = e.getDeltaMovement();
+            this.vel.add(v.x);
+            this.vel.add(v.y);
+            this.vel.add(v.z);
+            net.minecraft.world.phys.AABB b = e.getBoundingBox();
+            this.box.add(b.minX);
+            this.box.add(b.minY);
+            this.box.add(b.minZ);
+            this.box.add(b.maxX);
+            this.box.add(b.maxY);
+            this.box.add(b.maxZ);
             if (hit != null) {
                 // an arrow that hits a block stays in it (AbstractArrow.onHitBlock sets inGround, :542; the hit effects are off here):
                 // the server's run calls that "stuck"

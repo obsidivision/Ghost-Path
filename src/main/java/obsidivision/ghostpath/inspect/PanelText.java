@@ -35,6 +35,20 @@ public final class PanelText {
         return out;
     }
 
+    /**
+     * One point of a client-side continuation (a projectile still flying when the ghost run stopped at the tick limit). Only the
+     * position, velocity and box are known; the client's copy, not the server's, made it.
+     */
+    public static List<String> continued(String type, long tick, double[] pos, double[] vel, boolean last, String endReason) {
+        List<String> out = new ArrayList<>();
+        out.add(type + "  t+" + tick + "  (continued, client-side)");
+        position(out, pos[0], pos[1], pos[2]);
+        vector(out, "vel", vel[0], vel[1], vel[2]);
+        out.add(last && endReason != null ? "ends: " + endReason + " t+" + tick : "in flight");
+        out.add("client-side copy, not the server's run");
+        return out;
+    }
+
     /** A real entity, as the server holds it; {@code index} of {@code count} in its stack. */
     public static List<String> real(EntityReadout e, int index, int count, boolean identical) {
         List<String> out = new ArrayList<>();

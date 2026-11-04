@@ -19,6 +19,7 @@ import net.minecraft.world.level.block.entity.DispenserBlockEntity;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.levelgen.Heightmap;
 import obsidivision.ghostpath.PathSettings;
+import obsidivision.ghostpath.client.Inspector;
 import obsidivision.ghostpath.client.PathRenderer;
 import obsidivision.ghostpath.client.Tails;
 import obsidivision.ghostpath.preview.PathSnapshot;
@@ -104,6 +105,60 @@ public class ClientPreviewGameTest implements FabricClientGameTest {
             int changed = ClientShots.countDifferent(hidden, shot1, 60);
             LOG.info("[ghostpath] client test: screenshot {} ({} pixels differ from the same view with the paths hidden)", shot1, changed);
             check(changed > 150, "the path is not in the capture: " + changed + " pixels differ");
+
+            // 1b. a continued point is hovered like a ghost point (camera 6 blocks north of it, looking south)
+            int pick = contTicks.length / 2;
+            net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(contXyz[3 * pick], contXyz[3 * pick + 1] + PathRenderer.lift(line.kind()), contXyz[3 * pick + 2]);
+            server.runCommand("tp @a " + at.x + " " + (at.y - 1.62) + " " + (at.z - 6.0) + " 0 0");
+            context.waitTicks(5);
+            context.waitFor(c -> Inspector.hoveredTail() != null, 200);
+            Inspector.TailHover th = context.computeOnClient(c -> Inspector.hoveredTail());
+            check(th.point() == pick && Inspector.hoveredGhost() == null, "hovered continued point " + th.point() + ", wanted " + pick);
+            context.waitTicks(2);
+            java.util.List<String> panel = Inspector.lastHoverPanel;
+            LOG.info("[ghostpath] client test: hovering continued point {} (t+{}): {}", pick, contTicks[pick], panel);
+            check(panel.getFirst().equals("minecraft:arrow  t+" + contTicks[pick] + "  (continued, client-side)") && panel.contains("pos x " + contXyz[3 * pick])
+                && panel.contains("pos y " + contXyz[3 * pick + 1]) && panel.stream().anyMatch(l -> l.startsWith("vel x ")), "continued panel: " + panel);
+            ClientShots.capture(context, "inspector-continued");
+
+            // 1c. the inspect key as a toggle: one press switches it on (the ray then goes through blocks), another off
+            net.minecraft.core.BlockPos wall = net.minecraft.core.BlockPos.containing(at.x, at.y, at.z - 3.0);
+            server.runOnServer(srv -> srv.overworld().setBlock(wall, Blocks.STONE.defaultBlockState(), 3));
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.hoveredTail()) == null, "hovered through a block");
+            server.runCommand("path inspect toggle");
+            context.getInput().pressKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.inspecting() && Inspector.hoveredTail() != null), "toggled on: the point behind the block must be hovered");
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.inspecting()), "toggled on: still on after the key was released");
+            context.getInput().pressKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> !Inspector.inspecting() && Inspector.hoveredTail() == null), "toggled off");
+            server.runCommand("path inspect hold");
+            context.getInput().holdKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(4);
+            check(context.computeOnClient(c -> Inspector.inspecting()), "hold mode: held");
+            context.getInput().releaseKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(4);
+            check(context.computeOnClient(c -> !Inspector.inspecting()), "hold mode: released");
+            server.runOnServer(srv -> srv.overworld().setBlock(wall, Blocks.AIR.defaultBlockState(), 3));
+
+            // 1d. /path pins clear
+            context.getInput().holdKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(3);
+            context.getInput().pressMouse(0); // clicking a continued point pins nothing and attacks nothing
+            context.waitTicks(3);
+            context.getInput().releaseKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            check(Inspector.pins().isEmpty(), "a continued point was pinned");
+            context.computeOnClient(c -> {
+                Inspector.addPinForTest(new obsidivision.ghostpath.inspect.Pin("minecraft:arrow", 0, 3));
+                return null;
+            });
+            check(Inspector.pins().size() == 1, "test pin");
+            server.runCommand("path pins clear");
+            context.waitTicks(3);
+            check(Inspector.pins().isEmpty(), "pins after /path pins clear: " + Inspector.pins());
 
             // 2. the same shot with the default limit: a stuck arrow is settled (ruling after step 5), so the recording ends a few
             //    ticks after it stuck and no limit is needed; the whole flight is on the server

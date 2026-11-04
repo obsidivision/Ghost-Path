@@ -36,23 +36,40 @@ public final class Picker {
         List<PathSnapshot.Line> lines = snapshot.lines();
         for (int li = 0; li < lines.size(); li++) {
             PathSnapshot.Line l = lines.get(li);
-            int n = l.points();
-            double up = lift.applyAsDouble(l);
-            double[] xyz = l.xyz();
-            for (int i = 0; i < n; i++) {
-                double ax = xyz[3 * i];
-                double ay = xyz[3 * i + 1] + up;
-                double az = xyz[3 * i + 2];
-                double bx = i == 0 ? ax : xyz[3 * i - 3];
-                double by = i == 0 ? ay : xyz[3 * i - 2] + up;
-                double bz = i == 0 ? az : xyz[3 * i - 1];
-                // the segment from point i-1 (b) to point i (a); for the first point just the point
-                double[] r = closest(origin, d, bx, by, bz, ax, ay, az, maxDistance);
-                double along = r[0];
-                double lateral = r[1];
-                double u = r[2];
-                if (lateral <= tolerance(along) && (best == null || along < best.along() || along == best.along() && lateral < best.lateral())) {
-                    best = new Hit(li, i == 0 ? 0 : u < 0.5 ? i - 1 : i, along, lateral);
+            Hit h = pickPoints(li, l.xyz(), l.points(), lift.applyAsDouble(l), origin, d, maxDistance);
+            if (better(h, best)) {
+                best = h;
+            }
+        }
+        return best;
+    }
+
+    private static boolean better(@Nullable Hit h, @Nullable Hit best) {
+        return h != null && (best == null || h.along() < best.along() || h.along() == best.along() && h.lateral() < best.lateral());
+    }
+
+    /**
+     * The best hit on one polyline of {@code n} points ({@code xyz}, three doubles each, drawn {@code up} blocks higher), or null.
+     * {@code d} is the unit look direction. The hit's {@code line} is {@code lineIndex}.
+     */
+    public static @Nullable Hit pickPoints(int lineIndex, double[] xyz, int n, double up, Vec3 origin, Vec3 d, double maxDistance) {
+        Hit best = null;
+        for (int i = 0; i < n; i++) {
+            double ax = xyz[3 * i];
+            double ay = xyz[3 * i + 1] + up;
+            double az = xyz[3 * i + 2];
+            double bx = i == 0 ? ax : xyz[3 * i - 3];
+            double by = i == 0 ? ay : xyz[3 * i - 2] + up;
+            double bz = i == 0 ? az : xyz[3 * i - 1];
+            // the segment from point i-1 (b) to point i (a); for the first point just the point
+            double[] r = closest(origin, d, bx, by, bz, ax, ay, az, maxDistance);
+            double along = r[0];
+            double lateral = r[1];
+            double u = r[2];
+            if (lateral <= tolerance(along)) {
+                Hit h = new Hit(lineIndex, i == 0 ? 0 : u < 0.5 ? i - 1 : i, along, lateral);
+                if (better(h, best)) {
+                    best = h;
                 }
             }
         }

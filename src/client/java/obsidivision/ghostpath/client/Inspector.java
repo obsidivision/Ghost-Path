@@ -69,6 +69,13 @@ public final class Inspector {
         }
     }
 
+    /**
+     * A hovered point of a client-side continuation ({@link Tails}): {@code point} indexes the job's own points. The job is kept
+     * (its arrays only grow), so the record stays valid when a newer snapshot starts other jobs.
+     */
+    public record TailHover(PathSnapshot snapshot, int line, Tails.Job job, int point, double along) {
+    }
+
     /** A hovered real entity (the client's id, which is the server's). */
     public record RealHover(int id, double along) {
     }
@@ -78,7 +85,11 @@ public final class Inspector {
     }
 
     private static @Nullable GhostHover hoverGhost;
+    private static @Nullable TailHover hoverTail;
     private static @Nullable RealHover hoverReal;
+    /** Toggle mode ({@code /path inspect toggle}): whether the inspect key is switched on. */
+    private static boolean toggledOn;
+    private static int seenPinsClear = PathSettings.pinsClearSerial;
     private static int memberCursor;
     private static int cursorLine = -1;
     private static int realSelected;
@@ -95,11 +106,16 @@ public final class Inspector {
 
     public static boolean inspecting() {
         Minecraft mc = Minecraft.getInstance();
-        return GhostPathClient.INSPECT.isDown() && PathSettings.showPaths && mc.gui.screen() == null && mc.level != null;
+        boolean on = PathSettings.inspectToggle ? toggledOn : GhostPathClient.INSPECT.isDown();
+        return on && PathSettings.showPaths && mc.gui.screen() == null && mc.level != null;
     }
 
     public static @Nullable GhostHover hoveredGhost() {
         return hoverGhost;
+    }
+
+    public static @Nullable TailHover hoveredTail() {
+        return hoverTail;
     }
 
     public static @Nullable RealHover hoveredReal() {
@@ -128,6 +144,11 @@ public final class Inspector {
         return s == null ? new Pin.Resolution(-1, -1, "no prediction yet") : PINS.get(i).resolve(s);
     }
 
+    /** For the client game test: a pin made without a click. */
+    public static void addPinForTest(Pin pin) {
+        PINS.add(pin);
+    }
+
     public static void clearPins() {
         PINS.clear();
     }
@@ -139,6 +160,7 @@ public final class Inspector {
         ClientLevel level = mc.level;
         hoverGhost = null;
         hoverReal = null;
+        hoverTail = null;
         PathSnapshot s = PathStore.latest();
         if (!PathSettings.showPaths || level == null) {
             return;
@@ -156,6 +178,31 @@ public final class Inspector {
             }
         }
         Picker.Hit ghost = here ? Picker.pick(s, origin, dir, max, l -> PathRenderer.lift(l.kind())) : null;
+        // the client-side continuations: their points are picked the same way, from the end of their line on
+        int tailLine = -1;
+        Tails.Job tailJob = null;
+        Picker.Hit tail = null;
+        if (here) {
+            Vec3 d = dir.normalize();
+            for (int i = 0; i < s.lines().size(); i++) {
+                Tails.Job job = Tails.job(s, i);
+                if (job == null || job.points() == 0) {
+                    continue;
+                }
+                PathSnapshot.Line l = s.lines().get(i);
+                int m = job.points();
+                double[] xyz = new double[3 * (m + 1)];
+                int last = l.points() - 1;
+                System.arraycopy(l.xyz(), 3 * last, xyz, 0, 3);
+                System.arraycopy(job.xyz.elements(), 0, xyz, 3, 3 * m);
+                Picker.Hit h = Picker.pickPoints(i, xyz, m + 1, PathRenderer.lift(l.kind()), origin, d, max);
+                if (h != null && h.point() >= 1 && (tail == null || h.along() < tail.along())) { // point 0 is the line's own last point
+                    tail = new Picker.Hit(i, h.point() - 1, h.along(), h.lateral());
+                    tailLine = i;
+                    tailJob = job;
+                }
+            }
+        }
         double realDist = Double.MAX_VALUE;
         int realId = -1;
         Vec3 end = origin.add(dir.scale(max));
@@ -179,7 +226,9 @@ public final class Inspector {
                 realId = e.getId();
             }
         }
-        if (ghost != null && (realId < 0 || ghost.along() <= realDist)) {
+        if (tail != null && (ghost == null || tail.along() < ghost.along()) && (realId < 0 || tail.along() <= realDist)) {
+            hoverTail = new TailHover(s, tailLine, tailJob, tail.point(), tail.along());
+        } else if (ghost != null && (realId < 0 || ghost.along() <= realDist)) {
             hoverGhost = new GhostHover(s, ghost.line(), ghost.point(), ghost.along());
             if (ghost.line() != cursorLine) {
                 cursorLine = ghost.line();
@@ -198,6 +247,14 @@ public final class Inspector {
             int p = hover.point();
             Gizmos.cuboid(boxAt(l, p), GizmoStyle.stroke(PathRenderer.color(l.kind()), 3.0F));
             Gizmos.point(pointAt(l, p), PIN_COLOR, 14.0F);
+        }
+        TailHover th = hoverTail;
+        if (th != null) {
+            PathSnapshot.Line l = th.snapshot().lines().get(th.line());
+            double[] b = th.job().box.elements();
+            int p = th.point();
+            Gizmos.cuboid(new AABB(b[6 * p], b[6 * p + 1], b[6 * p + 2], b[6 * p + 3], b[6 * p + 4], b[6 * p + 5]), GizmoStyle.stroke(PathRenderer.color(l.kind()), 3.0F));
+            Gizmos.point(new Vec3(th.job().xyz.getDouble(3 * p), th.job().xyz.getDouble(3 * p + 1) + PathRenderer.lift(l.kind()), th.job().xyz.getDouble(3 * p + 2)), PIN_COLOR, 14.0F);
         }
         RealData data = realData;
         if (hoverReal != null && data != null && data.hoveredId() == hoverReal.id()) {
@@ -235,6 +292,23 @@ public final class Inspector {
     // ---- every client tick ---------------------------------------------------------------------------------------------------
 
     static void tick(Minecraft mc) {
+        if (PathSettings.inspectToggle) {
+            while (GhostPathClient.INSPECT.consumeClick()) {
+                toggledOn = !toggledOn;
+                if (mc.player != null) {
+                    mc.player.sendOverlayMessage(Component.literal("Inspect " + (toggledOn ? "on" : "off")));
+                }
+            }
+        } else {
+            toggledOn = false;
+            while (GhostPathClient.INSPECT.consumeClick()) {
+                // hold mode: the key is read with isDown
+            }
+        }
+        if (PathSettings.pinsClearSerial != seenPinsClear) {
+            seenPinsClear = PathSettings.pinsClearSerial;
+            PINS.clear();
+        }
         RealHover real = hoverReal;
         IntegratedServer server = mc.getSingleplayerServer();
         if (real == null || server == null || mc.level == null) {
@@ -292,12 +366,14 @@ public final class Inspector {
 
     /** A scroll while the inspect key is held and something is hovered: steps through the stack. Returns whether it was used. */
     public static boolean onScroll(double yOffset) {
-        if (!inspecting() || yOffset == 0.0 || hoverGhost == null && hoverReal == null) {
+        if (!inspecting() || yOffset == 0.0 || hoverGhost == null && hoverReal == null && hoverTail == null) {
             return false;
         }
         int step = yOffset > 0 ? -1 : 1;
         if (hoverGhost != null) {
             memberCursor += step;
+        } else if (hoverTail != null) {
+            return true; // a continuation is one entity: nothing to step through, but the wheel stays out of the hotbar
         } else {
             realSelected += step;
         }
@@ -314,11 +390,12 @@ public final class Inspector {
         Font font = mc.font;
         PathSnapshot s = PathStore.latest();
         GhostHover ghost = hoverGhost;
+        TailHover tail = hoverTail;
         List<String> hover = hoverPanel(ghost);
         lastHoverPanel = hover;
         if (!hover.isEmpty() && !(ghost != null && PINS.contains(pinOf(ghost)))) { // a pinned point is shown by its pin
             panelsDrawn++;
-            int color = ghost != null ? PathRenderer.color(ghost.path().kind()) : REAL_COLOR;
+            int color = ghost != null ? PathRenderer.color(ghost.path().kind()) : tail != null ? PathRenderer.color(tail.snapshot().lines().get(tail.line()).kind()) : REAL_COLOR;
             panel(g, font, g.guiWidth() / 2 + 14, g.guiHeight() / 2 - (hover.size() * 10 + 6) / 2, hover, color);
         }
         // pins down the right edge; when the next does not fit above the bottom, a new column to the left
@@ -343,6 +420,14 @@ public final class Inspector {
     private static List<String> hoverPanel(@Nullable GhostHover h) {
         if (h != null) {
             return PanelText.ghost(h.path(), h.point(), memberCursor, h.snapshot().source());
+        }
+        TailHover t = hoverTail;
+        if (t != null) {
+            Tails.Job j = t.job();
+            int p = t.point();
+            double[] pos = {j.xyz.getDouble(3 * p), j.xyz.getDouble(3 * p + 1), j.xyz.getDouble(3 * p + 2)};
+            double[] vel = {j.vel.getDouble(3 * p), j.vel.getDouble(3 * p + 1), j.vel.getDouble(3 * p + 2)};
+            return PanelText.continued(t.snapshot().lines().get(t.line()).type(), j.ticks.getLong(p), pos, vel, j.done() && p == j.points() - 1, j.endReason());
         }
         RealHover r = hoverReal;
         RealData data = realData;

@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -54,6 +54,11 @@ public final class PathCommand {
             .then(Commands.literal("show")
                 .then(Commands.literal("on").executes(ctx -> show(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> show(ctx.getSource(), false))))
+            .then(Commands.literal("inspect")
+                .then(Commands.literal("hold").executes(ctx -> inspectMode(ctx.getSource(), false)))
+                .then(Commands.literal("toggle").executes(ctx -> inspectMode(ctx.getSource(), true))))
+            .then(Commands.literal("pins")
+                .then(Commands.literal("clear").executes(ctx -> pinsClear(ctx.getSource()))))
             .then(Commands.literal("interval")
                 .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 10_000))
                     .executes(ctx -> interval(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"), 0))
@@ -75,6 +80,18 @@ public final class PathCommand {
     private static int show(CommandSourceStack source, boolean on) {
         PathSettings.showPaths = on;
         source.sendSuccess(() -> Component.literal("Flight paths " + (on ? "shown" : "hidden")), false);
+        return 1;
+    }
+
+    private static int inspectMode(CommandSourceStack source, boolean toggle) {
+        PathSettings.inspectToggle = toggle;
+        source.sendSuccess(() -> Component.literal("Inspect key: " + (toggle ? "press to switch on or off" : "hold")), false);
+        return 1;
+    }
+
+    private static int pinsClear(CommandSourceStack source) {
+        PathSettings.pinsClearSerial++;
+        source.sendSuccess(() -> Component.literal("Pins cleared."), false);
         return 1;
     }
 

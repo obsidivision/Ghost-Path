@@ -223,4 +223,21 @@ public class InspectorTest {
             helper.succeed();
         });
     }
+
+    @GameTest
+    public void aContinuationPointIsPickedAndDescribed(GameTestHelper helper) {
+        // a polyline x = 0..5 (point 0 is the line's own last point, as the client builds it); the ray crosses it at x = 3.9
+        double[] xyz = new double[18];
+        for (int k = 0; k < 6; k++) {
+            xyz[3 * k] = k;
+        }
+        Picker.Hit h = Picker.pickPoints(7, xyz, 6, 0.0, new Vec3(3.9, 0, -10), Z, 64);
+        helper.assertTrue(h != null && h.line() == 7 && h.point() == 4, "continuation hit: " + h);
+        helper.assertTrue(Picker.pickPoints(7, xyz, 6, 0.0, new Vec3(3.9, 5, -10), Z, 64) == null, "a ray 5 blocks off hit");
+        List<String> t = PanelText.continued("minecraft:arrow", 31, new double[] {0.1 + 0.2, -0.0, 12.75}, new double[] {1.0 / 3, 0, -0.5}, true, "stuck");
+        helper.assertTrue(t.getFirst().equals("minecraft:arrow  t+31  (continued, client-side)") && t.contains("pos x " + (0.1 + 0.2)) && t.contains("pos y -0.0")
+            && t.contains("vel x " + (1.0 / 3)) && t.contains("ends: stuck t+31") && t.contains("client-side copy, not the server's run"), "continued text: " + t);
+        helper.assertTrue(PanelText.continued("minecraft:arrow", 30, new double[3], new double[3], false, null).contains("in flight"), "in flight");
+        helper.succeed();
+    }
 }
