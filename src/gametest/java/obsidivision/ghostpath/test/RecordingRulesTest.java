@@ -465,4 +465,73 @@ public class RecordingRulesTest {
         helper.assertTrue(left.isEmpty() && level.getEntity(tntId) == null, "spawned TNT saved into the chunk not removed: " + left.size());
         helper.succeed();
     }
+
+    /**
+     * Scoped restore (ruling): the 1b machine with a lever, plus the unrelated observer clock next to it. During the
+     * recording the test (outside the chain) places a gold block away from the blast, and turns the floor block under
+     * the TNT into gold, which the blast then destroys (written by both: shared). After the restore: the machine area is
+     * as before (the clock and the far gold block aside), the far gold block is still there, the shared floor block is
+     * stone again, the clock was left alone, and the summary counts both.
+     */
+    @GameTest(maxTicks = 20000, padding = 24, environment = "ghostpath-gametest:rules_scoped_restore")
+    public void scopedRestoreKeepsNonChainChanges(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        PathSettings.kick = true;
+        PathSettings.tickLimit = PathSettings.DEFAULT_TICK_LIMIT;
+        RecordingStore.clear();
+        CauseTrackingTest.buildMachine(helper, BlockPos.ZERO, true);
+        List<BlockPos> clock = List.of(new BlockPos(0, 2, 4), new BlockPos(1, 2, 4), new BlockPos(2, 2, 4), new BlockPos(3, 2, 4));
+        helper.setBlock(clock.get(0), Blocks.REDSTONE_LAMP);
+        helper.setBlock(clock.get(3), Blocks.REDSTONE_LAMP);
+        helper.setBlock(clock.get(1), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, Direction.EAST));
+        helper.setBlock(clock.get(2), Blocks.OBSERVER.defaultBlockState().setValue(net.minecraft.world.level.block.ObserverBlock.FACING, Direction.WEST));
+        BlockPos farGold = new BlockPos(0, 2, 6);
+        BlockPos sharedFloor = new BlockPos(10, 1, 1); // under the TNT
+        BlockPos lever = helper.absolutePos(CauseTrackingTest.trigger());
+        BlockPos min = helper.absolutePos(new BlockPos(-4, 0, -4));
+        BlockPos max = helper.absolutePos(new BlockPos(18, 5, 10));
+        java.util.Set<BlockPos> skip = new java.util.HashSet<>();
+        for (BlockPos rel : clock) {
+            skip.add(helper.absolutePos(rel));
+        }
+        skip.add(helper.absolutePos(farGold));
+        helper.runAfterDelay(10, () -> CauseTrackingTest.whenEntityTicking(helper, () -> {
+            Map<BlockPos, net.minecraft.world.level.block.state.BlockState> before = new java.util.HashMap<>();
+            for (BlockPos p : BlockPos.betweenClosed(min, max)) {
+                if (!skip.contains(p)) {
+                    before.put(p.immutable(), level.getBlockState(p));
+                }
+            }
+            MachineCommandTest.Capture out = new MachineCommandTest.Capture();
+            MachineCommandTest.runCommand(helper, level, out, lever, () -> {
+                Recording r = RecordingStore.latest();
+                helper.assertTrue(r != null && !r.limitHit(), "recording failed: " + out.lines);
+                List<String> diff = new ArrayList<>();
+                before.forEach((p, st) -> {
+                    if (level.getBlockState(p) != st) {
+                        diff.add(p.toShortString() + " " + st + " -> " + level.getBlockState(p));
+                    }
+                });
+                LOG.info("[ghostpath] scoped restore: shared {}, left {} positions / {} entities; far gold {}, shared floor {}; machine diffs {}",
+                    r.sharedRestored(), r.nonChainBlocksLeft(), r.nonChainEntitiesLeft(), level.getBlockState(helper.absolutePos(farGold)),
+                    level.getBlockState(helper.absolutePos(sharedFloor)), diff.size());
+                CauseTrackingTest.forceChunks(helper, false);
+                helper.assertTrue(r.writes().contains(helper.absolutePos(sharedFloor)), "the blast did not destroy the floor under the TNT: test proves nothing");
+                helper.assertTrue(level.getBlockState(helper.absolutePos(farGold)).is(Blocks.GOLD_BLOCK), "non-chain block placed during the recording was reverted");
+                helper.assertTrue(diff.isEmpty(), "machine not fully restored: " + diff.stream().limit(5).toList() + " (" + diff.size() + ")");
+                helper.assertTrue(level.getBlockState(helper.absolutePos(sharedFloor)).is(Blocks.STONE), "shared position not restored");
+                helper.assertTrue(r.sharedRestored() >= 1, "shared position not counted: " + r.summary());
+                helper.assertTrue(r.nonChainBlocksLeft() >= 3, "clock and gold block not counted as left in place: " + r.summary());
+                helper.assertTrue(r.summary().stream().anyMatch(l -> l.startsWith("Restore: chain changes only; shared positions restored: " + r.sharedRestored()
+                    + "; non-chain changes left in place: " + r.nonChainBlocksLeft() + " positions")), "restore line missing: " + r.summary());
+                helper.succeed();
+            });
+            // outside the chain, during the recording
+            helper.runAfterDelay(20, () -> {
+                helper.assertTrue(MachineRecorder.current() != null, "recording already over at t+20");
+                helper.setBlock(farGold, Blocks.GOLD_BLOCK);
+                helper.setBlock(sharedFloor, Blocks.GOLD_BLOCK);
+            });
+        }));
+    }
 }

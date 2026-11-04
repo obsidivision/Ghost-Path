@@ -173,9 +173,9 @@ public class MachineCommandTest {
     }
 
     private static List<String> normalized(Recording r) {
-        // light reads are not repeatable (DESIGN); chunks reloaded for the restore depend on what else unloaded meanwhile
-        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *")
-            .replaceAll("; chunks loaded again for the restore: \\d+", "")).toList();
+        // light reads are not repeatable (DESIGN). The restore is scoped to the chain, so "chunks loaded again for the
+        // restore" is compared again (it varied with unrelated chunks while the restore was level-wide).
+        return r.summary().stream().map(l -> l.replaceAll("light reads \\d+", "light reads *")).toList();
     }
 
     private static Map<BlockPos, Set<CauseTracker.ReadKind>> readsWithoutLight(Recording r) {

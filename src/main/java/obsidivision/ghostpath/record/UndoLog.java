@@ -96,6 +96,12 @@ public final class UndoLog {
         return active;
     }
 
+    /**
+     * What a scoped restore puts back (ruling: only what the chain did; {@link CauseTracker#restoreScope()}). Everything
+     * is still logged; positions, entities, ticks and block events outside the scope are left as they are now.
+     */
+    public record Scope(Set<BlockPos> positions, Set<UUID> entities, Set<ScheduledTick<?>> ticks, Set<BlockEventData> blockEvents) {}
+
     private record BlockSnapshot(BlockState state, @Nullable CompoundTag blockEntity) {}
 
     /**
@@ -145,6 +151,11 @@ public final class UndoLog {
     /** Entities (spawned or snapshotted) unloaded with their chunk during the log: UUID -> chunk they were saved into. */
     private final Map<UUID, Long> unloadedEntities = new LinkedHashMap<>();
     private int entitiesNotRestored;
+    /** Positions whose block state or block entity was changed by work outside the chain (CauseTracker context off). */
+    private final Set<BlockPos> nonChainWrites = new LinkedHashSet<>();
+    private int sharedRestored;
+    private int nonChainBlocksLeft;
+    private int nonChainEntitiesLeft;
     private long startTime;
     private int ticksNotRestored;
     private boolean busy; // true while we read or write the world ourselves, so our own calls are not logged
@@ -185,6 +196,21 @@ public final class UndoLog {
         return this.entitiesNotRestored;
     }
 
+    /** Scoped restore: positions written by both chain and non-chain work (restored). */
+    public int sharedRestored() {
+        return this.sharedRestored;
+    }
+
+    /** Scoped restore: positions changed only by non-chain work, left as they are. */
+    public int nonChainBlocksLeft() {
+        return this.nonChainBlocksLeft;
+    }
+
+    /** Scoped restore: entities spawned or changed only by non-chain work, left as they are. */
+    public int nonChainEntitiesLeft() {
+        return this.nonChainEntitiesLeft;
+    }
+
     /** Chunks that unloaded while the log was active. */
     public LongSet unloadedChunks() {
         return this.unloadedChunks;
@@ -196,6 +222,35 @@ public final class UndoLog {
      * begin ticks of a chunk that unloaded. Load them (and wait for their entities) before restoring.
      */
     public LongSet chunksToLoad() {
+        return this.chunksToLoad(null);
+    }
+
+    /** {@link #chunksToLoad()} for a scoped restore: only chunks holding something in {@code scope}. */
+    public LongSet chunksToLoad(@Nullable Scope scope) {
+        if (scope != null) {
+            LongSet need = new LongLinkedOpenHashSet();
+            for (BlockPos pos : scope.positions()) {
+                need.add(ChunkPos.containing(pos).pack());
+            }
+            this.entities.forEach((id, snap) -> {
+                if (scope.entities().contains(id)) {
+                    need.add(snap.chunk());
+                }
+            });
+            this.unloadedEntities.forEach((id, chunk) -> {
+                if (scope.entities().contains(id)) {
+                    need.add(chunk.longValue());
+                }
+            });
+            for (ScheduledTick<?> t : scope.ticks()) {
+                long key = ChunkPos.containing(t.pos()).pack();
+                if (this.unloadedChunks.contains(key)) {
+                    need.add(key);
+                }
+            }
+            need.removeIf((long key) -> this.loadedWithEntities(key));
+            return need;
+        }
         LongSet need = new LongLinkedOpenHashSet();
         for (BlockPos pos : this.blocks.keySet()) {
             need.add(ChunkPos.containing(pos).pack());
@@ -247,9 +302,13 @@ public final class UndoLog {
     // ---- hooks (called from mixins; server thread only) ----
 
     /** Before a block write at {@code pos} in {@code chunk}. */
-    public void onBlockChange(LevelChunk chunk, BlockPos pos) {
+    public void onBlockChange(LevelChunk chunk, BlockPos pos, BlockState newState) {
         if (this.busy || chunk.getLevel() != this.level) {
             return;
+        }
+        CauseTracker tracker = CauseTracker.active();
+        if (!(tracker != null && tracker.inChain(this.level)) && chunk.getBlockState(pos) != newState) {
+            this.nonChainWrites.add(pos.immutable());
         }
         this.captureBlock(pos);
     }
@@ -271,7 +330,14 @@ public final class UndoLog {
 
     /** {@code BlockEntity.setChanged()}: the change is already done. If this is the first touch, the snapshot is late. */
     public void onBlockEntityChanged(BlockEntity blockEntity) {
-        if (this.busy || blockEntity.getLevel() != this.level || this.blocks.containsKey(blockEntity.getBlockPos())) {
+        if (this.busy || blockEntity.getLevel() != this.level) {
+            return;
+        }
+        CauseTracker tracker = CauseTracker.active();
+        if (!(tracker != null && tracker.inChain(this.level))) {
+            this.nonChainWrites.add(blockEntity.getBlockPos().immutable());
+        }
+        if (this.blocks.containsKey(blockEntity.getBlockPos())) {
             return;
         }
         BlockPos pos = blockEntity.getBlockPos().immutable();
@@ -350,10 +416,32 @@ public final class UndoLog {
         }
     }
 
-    /** Puts the world back and ends the recording. */
+    /** Puts the whole level back as at begin (every logged change) and ends the recording. */
     public void restore() {
+        this.restore(null);
+    }
+
+    /**
+     * Puts back what is in {@code scope} (null: everything logged) and ends the recording. A scoped restore leaves every
+     * change outside the scope as it is now: blocks changed by non-chain work, entities spawned or changed by it, its
+     * ticks and block events. A position in the scope that non-chain work also wrote is restored and counted as shared.
+     */
+    public void restore(@Nullable Scope scope) {
         if (this.finished) {
             throw new IllegalStateException("already restored");
+        }
+        if (scope != null) {
+            this.busy = true;
+            try {
+                this.restoreScoped(scope);
+            } finally {
+                this.busy = false;
+                this.finished = true;
+                if (active == this) {
+                    active = null;
+                }
+            }
+            return;
         }
         this.busy = true;
         try {
@@ -404,6 +492,115 @@ public final class UndoLog {
             this.finished = true;
             if (active == this) {
                 active = null;
+            }
+        }
+    }
+
+    private void restoreScoped(Scope scope) {
+        // 1. chain entities that appeared during the recording (a reloaded one is a new object: by UUID)
+        for (Entity e : this.spawned) {
+            if (!scope.entities().contains(e.getUUID())) {
+                this.nonChainEntitiesLeft++;
+                continue;
+            }
+            this.removeSpawned(e);
+        }
+        // 2. positions the chain wrote or whose block entity joined the chain
+        for (Map.Entry<BlockPos, BlockSnapshot> entry : this.blocks.entrySet()) {
+            BlockPos pos = entry.getKey();
+            if (!scope.positions().contains(pos)) {
+                if (this.nonChainWrites.contains(pos)) {
+                    this.nonChainBlocksLeft++;
+                }
+                continue;
+            }
+            if (this.nonChainWrites.contains(pos)) {
+                this.sharedRestored++;
+            }
+            BlockSnapshot snap = entry.getValue();
+            if (this.level.getBlockState(pos) != snap.state()) {
+                this.level.setBlock(pos, snap.state(), RESTORE_FLAGS);
+            }
+            this.restoreBlockEntity(pos, snap);
+        }
+        // 3. chain entities that existed before
+        for (Map.Entry<UUID, EntitySnapshot> entry : this.entities.entrySet()) {
+            if (!scope.entities().contains(entry.getKey())) {
+                this.nonChainEntitiesLeft++;
+                continue;
+            }
+            this.restoreTouched(entry.getKey(), entry.getValue());
+        }
+        // 4. ticks: the chain's own are removed; at chain positions the begin ticks come back
+        long now = this.level.getGameTime();
+        this.restoreTicksScoped(this.level.getBlockTicks(), this.blockTicks, now, scope);
+        this.restoreTicksScoped(this.level.getFluidTicks(), this.fluidTicks, now, scope);
+        // 5. block events: the chain's own are removed; begin events at chain positions come back
+        ObjectLinkedOpenHashSet<BlockEventData> queue = ((ServerLevelAccessor) this.level).ghostpath$blockEvents();
+        queue.removeIf(e -> scope.blockEvents().contains(e));
+        for (BlockEventData e : this.blockEvents) {
+            if (scope.positions().contains(e.pos())) {
+                queue.add(e);
+            }
+        }
+        if (this.nonChainBlocksLeft + this.nonChainEntitiesLeft > 0) {
+            LOGGER.info("[ghostpath] undo log: left in place {} positions and {} entities changed outside the chain; {} shared positions restored",
+                this.nonChainBlocksLeft, this.nonChainEntitiesLeft, this.sharedRestored);
+        }
+    }
+
+    private void removeSpawned(Entity e) {
+        if (!e.isRemoved()) {
+            e.discard();
+        }
+        Entity reloaded = this.level.getEntity(e.getUUID());
+        if (reloaded != null && reloaded != e && !reloaded.isRemoved()) {
+            reloaded.discard();
+        } else if (reloaded == null && this.unloadedEntities.containsKey(e.getUUID())
+            && !this.loadedWithEntities(this.unloadedEntities.get(e.getUUID()))) {
+            this.entitiesNotRestored++;
+            LOGGER.warn("[ghostpath] undo log: spawned entity {} is saved in unloaded chunk {} and was not removed", e.getUUID(),
+                ChunkPos.unpack(this.unloadedEntities.get(e.getUUID())));
+        }
+    }
+
+    private void restoreTouched(UUID id, EntitySnapshot snap) {
+        Long savedIn = this.unloadedEntities.get(id);
+        if (this.level.getEntity(id) == null && savedIn != null && !this.loadedWithEntities(savedIn)) {
+            // the changed copy is in an unloaded chunk: a recreated one would be a duplicate UUID
+            this.entitiesNotRestored++;
+            LOGGER.warn("[ghostpath] undo log: entity {} is saved in unloaded chunk {} and was not restored", id, ChunkPos.unpack(savedIn));
+            return;
+        }
+        this.restoreEntity(id, snap);
+    }
+
+    /**
+     * Scoped tick restore. In every loaded chunk: ticks the chain queued (by identity) and ticks at a chain position are
+     * dropped, all others are kept as they are (same objects, so their order holds); the begin ticks at chain positions
+     * are re-added with their remaining delay, priority and sub-tick order. Begin ticks at chain positions whose chunk is
+     * not loaded are counted as not restored.
+     */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private <T> void restoreTicksScoped(LevelTicks<T> ticks, Map<Long, TickSnapshot> snapshot, long now, Scope scope) {
+        Long2ObjectMap<LevelChunkTicks<T>> containers = ((LevelTicksAccessor<T>) ticks).ghostpath$allContainers();
+        for (long key : new ArrayList<>(containers.keySet())) {
+            List<ScheduledTick<T>> current = containers.get(key).getAll().toList();
+            List<ScheduledTick<T>> keep = current.stream().filter(t -> !scope.ticks().contains(t) && !scope.positions().contains(t.pos())).toList();
+            TickSnapshot snap = snapshot.get(key);
+            List<ScheduledTick<?>> back = snap == null ? List.of() : snap.ticks().stream().filter(t -> scope.positions().contains(t.pos())).toList();
+            if (keep.size() == current.size() && back.isEmpty()) {
+                continue;
+            }
+            ticks.clearArea(this.chunkBox(key));
+            keep.forEach(ticks::schedule);
+            for (ScheduledTick tick : back) {
+                ticks.schedule(new ScheduledTick<>((T) tick.type(), tick.pos(), now + (tick.triggerTick() - this.startTime), tick.priority(), tick.subTickOrder()));
+            }
+        }
+        for (Map.Entry<Long, TickSnapshot> e : snapshot.entrySet()) {
+            if (containers.get(e.getKey().longValue()) == null) {
+                this.ticksNotRestored += (int) e.getValue().ticks().stream().filter(t -> scope.positions().contains(t.pos())).count();
             }
         }
     }

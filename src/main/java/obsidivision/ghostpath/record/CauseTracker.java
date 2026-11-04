@@ -138,6 +138,11 @@ public final class CauseTracker {
     /** Game time each chain block entity was last tagged, changed or had its block state changed by chain work. */
     private final Map<BlockEntity, Long> blockEntityChangedAt = new IdentityHashMap<>();
     private final Set<Entity> addedChainEntities = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Every entity ever tagged (also ones that left the dimension), for the restore scope. */
+    private final Set<Entity> everTagged = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Every tick and block event the chain itself queued (not merged ones), run or not, for the restore scope. */
+    private final Set<ScheduledTick<?>> chainTicksEver = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<BlockEventData> chainEventsEver = Collections.newSetFromMap(new IdentityHashMap<>());
     /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
     private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
     private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
@@ -320,6 +325,27 @@ public final class CauseTracker {
     /** Item ticks counted as "unchanged" although the position moved by less than {@link #ITEM_STILL_EPSILON}. */
     public int itemDriftTicks() {
         return this.itemDriftTicks;
+    }
+
+    /**
+     * What the undo log should put back after this recording (ruling): positions chain work wrote (block states, and
+     * block entities through setChanged), positions of block entities that joined the chain, every entity that joined
+     * the chain (spawned ones are removed, touched ones restored), and the ticks and block events the chain queued.
+     */
+    public UndoLog.Scope restoreScope() {
+        Set<BlockPos> positions = new LinkedHashSet<>(this.writes);
+        for (BlockEntity be : this.chainBlockEntities) {
+            positions.add(be.getBlockPos().immutable());
+        }
+        Set<java.util.UUID> entities = new HashSet<>();
+        for (Entity e : this.everTagged) {
+            entities.add(e.getUUID());
+        }
+        Set<ScheduledTick<?>> ticks = Collections.newSetFromMap(new IdentityHashMap<>());
+        ticks.addAll(this.chainTicksEver);
+        Set<BlockEventData> events = Collections.newSetFromMap(new IdentityHashMap<>());
+        events.addAll(this.chainEventsEver);
+        return new UndoLog.Scope(positions, entities, ticks, events);
     }
 
     /** Columns whose heightmap chain work read (a real block change in the column can change the height). */
@@ -573,6 +599,7 @@ public final class CauseTracker {
             how = " merged into a saved tick: not followed";
         } else {
             this.chainTicks.add(tick);
+            this.chainTicksEver.add(tick);
         }
         this.log(ChainEvent.Kind.TICK_SCHEDULED, tick.pos(), tick.type() + " delay=" + (tick.triggerTick() - this.level.getGameTime())
             + " priority=" + tick.priority() + how);
@@ -602,6 +629,9 @@ public final class CauseTracker {
             return;
         }
         this.chainBlockEvents.add(queued);
+        if (!merged) {
+            this.chainEventsEver.add(queued);
+        }
         this.log(ChainEvent.Kind.BLOCK_EVENT_QUEUED, queued.pos(), queued.block() + " " + queued.paramA() + "," + queued.paramB()
             + (merged ? " merged" : ""));
     }
@@ -637,6 +667,7 @@ public final class CauseTracker {
         }
         int index = this.nextEntityIndex++;
         this.chainEntities.put(entity, index);
+        this.everTagged.add(entity);
         // no position: an entity is often tagged inside its constructor, before its position is set
         this.log(ChainEvent.Kind.ENTITY_TAGGED, null, "#" + index + " " + EntityType.getKey(entity.getType()) + " " + why);
     }

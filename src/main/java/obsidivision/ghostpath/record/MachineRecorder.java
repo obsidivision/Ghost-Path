@@ -156,6 +156,8 @@ public final class MachineRecorder {
     private boolean restoring;
     private int restoreWait;
     private long restoreStartNanos;
+    /** What the restore puts back: only what the chain did (ruling); null until the recording part is over. */
+    private UndoLog.@org.jspecify.annotations.Nullable Scope scope;
     private LongSet restoreChunks = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private int endTicks;
     private boolean endLimitHit;
@@ -210,7 +212,8 @@ public final class MachineRecorder {
         this.endPending = pending;
         this.weatherAtEnd = Weather.of(this.level);
         this.tracker.end();
-        this.restoreChunks = this.undo.chunksToLoad();
+        this.scope = this.tracker.restoreScope();
+        this.restoreChunks = this.undo.chunksToLoad(this.scope);
         if (this.restoreChunks.isEmpty()) {
             this.finish();
             return;
@@ -233,7 +236,7 @@ public final class MachineRecorder {
     private void finish() {
         Recording recording;
         try {
-            this.undo.restore();
+            this.undo.restore(this.scope);
             recording = Recording.of(this.tracker, this.undo, this.trigger, this.endTicks, this.limit, this.endLimitHit, this.endPending, this.kick,
                 SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size());
         } catch (RuntimeException e) {
@@ -255,7 +258,7 @@ public final class MachineRecorder {
     private void cancel() {
         this.tracker.end();
         try {
-            this.undo.restore();
+            this.undo.restore(this.tracker.restoreScope());
         } finally {
             current = null;
             this.removeRestoreTickets();

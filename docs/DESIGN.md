@@ -442,7 +442,7 @@ Test `savingOffDuringRecordingAndWeatherStored`: `noSave` unchanged throughout; 
 - During the wait the rest of the world keeps running (nothing of the chain is pending by then); the reloaded chunks do not tick (load-only ticket).
 - R9 is unchanged for the recording itself; the restore, after it, adds load-only tickets.
 - A crash between the unload save and the restore leaves the half-run chunk on disk (not covered).
-- The undo log is level-wide, so a chunk outside the machine that unloads during the recording (with logged writes, begin ticks or recording-made ticks) is loaded again too. In the game tests this happens often (other tests' chunks around); the count varies by run, so `MachineCommandTest` leaves "chunks loaded again" out of its run-to-run summary comparison (like light reads).
+- (First version: the restore was level-wide, so unrelated chunks that unloaded were loaded again and the count varied by run. Fixed by the scoped restore below; the count is compared again in `MachineCommandTest` and was stable over 4 full runs: only the unload test's own chunk is ever loaded again.)
 - **Open, seen once:** in one of seven full runs after this change, `MachineCommandTest`'s second run of the 1b machine had 8 heightmap columns instead of 7 (and one chunk loaded again for its restore). Not reproduced in the next six runs; cause not found. Heightmap reads only happen in rain (`Level.precipitationAt`), at chain entity positions.
 Test `unloadedChunkRestored`: a lever and a dispenser with TNT in a far chunk that only the test's forced ticket keeps loaded. `/path machine` on the lever; once the TNT is dispensed the test drops the ticket, the chunk unloads, the TNT is logged "chain entity unloaded" (and the dispenser "chain block entity unloaded"), the recording ends, the chunk is loaded again for the restore. Then the test waits until the chunk has unloaded once more and loads it again: lever off, the TNT item back in the dispenser, no primed TNT (the dispensed TNT's UUID is gone).
 
@@ -463,6 +463,22 @@ Second round (autosave hold, unload restore, settle rule, dispenser slots, mob-o
 8. `chunksToLoad` empty: "chunk not loaded for the restore: ... entities not restored (chunk not loaded) ...".
 9. Reloaded spawned entity not removed by UUID: "spawned TNT saved into the chunk not removed: 1".
 10. Mob-owned draws not inexact: "sheared wool spread not marked 'inexact: mob'".
+
+---
+
+## Scoped restore (ruling: restore only what the chain did)  [implemented]
+Code: `UndoLog.Scope`, `UndoLog.restore(Scope)` / `chunksToLoad(Scope)`, `CauseTracker.restoreScope()`, `MachineRecorder`, `Recording`. Test: `RecordingRulesTest.scopedRestoreKeepsNonChainChanges`.
+
+The undo log still logs every change in the level (useful data). `/path machine` now restores only the **scope**:
+- positions chain work wrote (block state changes and chain `setChanged`, `CauseTracker.writes()`), plus the positions of every block entity that joined the chain (a hopper's own moves mark it changed through the static `setChanged`, which no hook sees);
+- chain entities: every entity ever tagged (by UUID, so a reloaded copy is found, and ones that left the dimension count): spawned ones are removed, touched ones restored;
+- ticks: in every loaded chunk, ticks the chain queued (identity; merged ones are not the chain's own) and ticks at a scope position are dropped; all others are kept as the same objects; the begin ticks at scope positions come back with their remaining delay. Block events: the chain's own are removed, begin events at scope positions come back.
+
+Outside the scope nothing is touched: a block placed by a player, a crop that grew, an unrelated clock (its blocks and ticks) stay as they are now. A position written by **both** chain and non-chain work is restored and counted as **shared**. The undo log tells chain from non-chain writes at the write itself (`onBlockChange` / `onBlockEntityChanged`, CauseTracker context on or off, only real changes). Summary line: "Restore: chain changes only; shared positions restored: N; non-chain changes left in place: N positions, N entities". `chunksToLoad(scope)` only lists chunks holding something in the scope, so unrelated chunks are no longer loaded for the restore.
+Direct users of the undo log (the 1a/R4 tests) still call `restore()` (no scope = everything, as before).
+
+Test: the 1b machine with a lever and the observer clock beside it. At t+20 the test (outside the chain) places a gold block away from the blast and turns the floor block under the TNT into gold, which the blast destroys. After the recording: the machine area (clock and far gold block aside) is as before; the far gold block is still there; the floor block is stone again; shared 1, left in place 5 positions (clock blocks and the gold block).
+Break-it checks, each made `runGameTest` exit 1 in that test for its own reason: recorder restoring without scope ("non-chain block placed during the recording was reverted"); shared positions skipped ("machine not fully restored: ... stone -> air"); non-chain write tracking off ("shared position not counted").
 
 ---
 

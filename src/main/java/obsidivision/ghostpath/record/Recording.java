@@ -39,6 +39,9 @@ import net.minecraft.world.phys.AABB;
  * @param chunksReloaded  chunks that unloaded during the recording and were loaded again for the restore
  * @param entitiesNotRestored spawned or changed entities left as they were because their chunk could not be loaded in time
  * @param itemDriftTicks  item ticks counted as "position unchanged" although it moved by less than 1e-6 (settle rule)
+ * @param sharedRestored  positions written by both chain and non-chain work (restored)
+ * @param nonChainBlocksLeft positions changed only outside the chain during the recording, left in place
+ * @param nonChainEntitiesLeft entities spawned or changed only outside the chain, left in place
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -68,6 +71,9 @@ public record Recording(
     int chunksReloaded,
     int entitiesNotRestored,
     int itemDriftTicks,
+    int sharedRestored,
+    int nonChainBlocksLeft,
+    int nonChainEntitiesLeft,
     List<String> notFollowed
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
@@ -101,6 +107,7 @@ public record Recording(
             Set.copyOf(undo.lateBlockEntities()),
             undo.ticksNotRestored(),
             weatherAtStart, weatherAtEnd, chunksReloaded, undo.entitiesNotRestored(), tracker.itemDriftTicks(),
+            undo.sharedRestored(), undo.nonChainBlocksLeft(), undo.nonChainEntitiesLeft(),
             tracker.notFollowed().stream().map(ChainEvent::toString).toList());
     }
 
@@ -129,6 +136,8 @@ public record Recording(
             + (this.ticksNotRestored > 0 ? "; scheduled ticks not restored: " + this.ticksNotRestored : "")
             + (this.chunksReloaded > 0 ? "; chunks loaded again for the restore: " + this.chunksReloaded : "")
             + (this.entitiesNotRestored > 0 ? "; entities not restored (chunk not loaded): " + this.entitiesNotRestored : ""));
+        out.add("Restore: chain changes only; shared positions restored: " + this.sharedRestored + "; non-chain changes left in place: "
+            + this.nonChainBlocksLeft + " positions, " + this.nonChainEntitiesLeft + " entities");
         out.add("Weather: " + this.weatherAtStart + " at start" + (this.weatherAtEnd.toString().equals(this.weatherAtStart.toString()) ? "" : ", " + this.weatherAtEnd + " at end"));
         if (this.unseededDrawsInexact > 0) {
             out.add("Inexact: a mob (its AI, or its own random) drew unseeded numbers, so the result may not repeat exactly");

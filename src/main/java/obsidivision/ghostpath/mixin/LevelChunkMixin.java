@@ -25,7 +25,7 @@ public abstract class LevelChunkMixin {
     private void ghostpath$beforeSetBlockState(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<BlockState> cir) {
         UndoLog log = UndoLog.active();
         if (log != null) {
-            log.onBlockChange((LevelChunk) (Object) this, pos);
+            log.onBlockChange((LevelChunk) (Object) this, pos, state);
         }
         CauseTracker tracker = CauseTracker.active();
         if (tracker != null) {
