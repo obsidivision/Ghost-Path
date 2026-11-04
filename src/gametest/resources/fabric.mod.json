@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "ghostpath-gametest",
+  "version": "1.0.0",
+  "name": "Ghost Path game tests",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "obsidivision.ghostpath.test.ClientPreviewGameTest"
+    ],
+    "fabric-gametest": [
+      "obsidivision.ghostpath.test.SmokeTest",
+      "obsidivision.ghostpath.test.UndoLogTest",
+      "obsidivision.ghostpath.test.CauseTrackingTest",
+      "obsidivision.ghostpath.test.UndoGapsTest",
+      "obsidivision.ghostpath.test.FootprintTest",
+      "obsidivision.ghostpath.test.HurtCoverageTest",
+      "obsidivision.ghostpath.test.FootprintVariationTest",
+      "obsidivision.ghostpath.test.MachineCommandTest",
+      "obsidivision.ghostpath.test.ChainGapsTest",
+      "obsidivision.ghostpath.test.RecordingRulesTest",
+      "obsidivision.ghostpath.test.GhostTest",
+      "obsidivision.ghostpath.test.GhostCheckTest",
+      "obsidivision.ghostpath.test.LiveRerunTest",
+      "obsidivision.ghostpath.test.LiveRerunRulingsTest",
+      "obsidivision.ghostpath.test.FlightPreviewTest"
+    ]
+  },
+  "depends": {
+    "ghostpath": "*"
+  }
+}
