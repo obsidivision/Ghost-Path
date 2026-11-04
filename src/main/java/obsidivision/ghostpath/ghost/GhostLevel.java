@@ -295,13 +295,18 @@ public final class GhostLevel extends ServerLevel {
     void pump(BooleanSupplier done, String what) {
         long deadline = System.nanoTime() + WAIT_NANOS;
         this.getServer().managedBlock(() -> {
-            this.getChunkSource().pollTask();
-            ((GhostServerLevelAccessor) (Object) this).ghostpath$entityManager().tick();
+            this.pollOnce();
             return done.getAsBoolean() || System.nanoTime() > deadline;
         });
         if (!done.getAsBoolean()) {
             throw new IllegalStateException("ghost: timed out waiting for " + what);
         }
+    }
+
+    /** The ghost's own pending main-thread work, once: chunk tasks and entity-section loads (the server never polls the ghost). */
+    void pollOnce() {
+        this.getChunkSource().pollTask();
+        ((GhostServerLevelAccessor) (Object) this).ghostpath$entityManager().tick();
     }
 
     /** Waits until every light task queued so far for the copied chunks has run (ThreadedLevelLightEngine.java:210). */

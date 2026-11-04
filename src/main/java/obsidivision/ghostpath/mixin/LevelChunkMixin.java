@@ -34,6 +34,20 @@ public abstract class LevelChunkMixin {
     }
 
     /**
+     * 26.2 LevelChunk.java:268 {@code setBlockState}: returns the old state when the block changed and null when it did not
+     * (:273, :281, :323 return null). RETURN, so the new state is in place. Live rerun (step 4): a real change at a watched
+     * machine's footprint starts the quiet period before a rerun. The ghost's own writes carry another dimension key and are
+     * ignored there.
+     */
+    @Inject(method = "setBlockState", at = @At("RETURN"))
+    private void ghostpath$afterSetBlockState(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<BlockState> cir) {
+        if (cir.getReturnValue() != null && obsidivision.ghostpath.watch.LiveWatch.active()
+            && ((LevelChunk) (Object) this).getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
+            obsidivision.ghostpath.watch.LiveWatch.onBlockChanged(level, pos);
+        }
+    }
+
+    /**
      * 26.2 LevelChunk.java:344, in setBlockState: {@code blockEntity.setBlockState(state)}, the branch where the block
      * entity is kept across a state change (same block, e.g. a hopper's ENABLED or FACING). Chain work there tags the
      * block entity (ruling, gap 1). Its undo-log snapshot was already taken at HEAD of setBlockState (captureBlock saves

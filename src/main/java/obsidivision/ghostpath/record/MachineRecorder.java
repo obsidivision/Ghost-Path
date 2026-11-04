@@ -89,6 +89,7 @@ public final class MachineRecorder {
         long startTime = level.getGameTime();
         Weather weather = Weather.of(level);
         net.minecraft.world.clock.PackedClockStates clocks = level.clockManager().packState();
+        obsidivision.ghostpath.watch.LiveWatch.preempt(); // a live rerun's ghost holds the autosave guard (one ghost at a time)
         SaveGuard saves = SaveGuard.begin(level.getServer());
         UndoLog undo;
         CauseTracker tracker;

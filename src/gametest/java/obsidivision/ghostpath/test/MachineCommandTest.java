@@ -104,6 +104,7 @@ public class MachineCommandTest {
     /** Runs {@code /path machine pos} and calls {@code then} with the captured output once the recording is over. */
     static void runCommand(GameTestHelper helper, ServerLevel level, Capture capture, BlockPos pos, Runnable then) {
         MinecraftServer server = level.getServer();
+        PathSettings.watchAfterMachine = false; // a watch would outlive the test and rerun when the next batch clears the area
         server.getCommands().performPrefixedCommand(source(level, capture, LevelBasedPermissionSet.GAMEMASTER),
             "path machine " + pos.getX() + " " + pos.getY() + " " + pos.getZ());
         whenIdle(helper, 0, then);

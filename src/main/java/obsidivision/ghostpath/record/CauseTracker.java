@@ -187,6 +187,23 @@ public final class CauseTracker {
         }
     }
 
+    /**
+     * Takes this tracker out of the hooks between slices of a ghost run that spans several server ticks (live rerun,
+     * step 4): while the real world ticks, no hook may see it. State is kept; {@link #resume} puts it back.
+     */
+    public void pause() {
+        if (active == this) {
+            active = null;
+        }
+    }
+
+    public void resume() {
+        if (active != null && active != this) {
+            throw new IllegalStateException("cause tracking is already active");
+        }
+        active = this;
+    }
+
     // ---- results ----
 
     public List<ChainEvent> events() {

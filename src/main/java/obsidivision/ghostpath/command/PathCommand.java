@@ -16,9 +16,11 @@ import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.ghost.GhostCheck;
 import obsidivision.ghostpath.record.MachineRecorder;
 import obsidivision.ghostpath.record.Recording;
+import obsidivision.ghostpath.watch.LiveWatch;
+import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -43,6 +45,12 @@ public final class PathCommand {
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
+            .then(Commands.literal("watch")
+                .then(Commands.literal("list").executes(ctx -> watchList(ctx.getSource())))
+                .then(Commands.literal("stop")
+                    .executes(ctx -> watchStop(ctx.getSource(), null))
+                    .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                        .executes(ctx -> watchStop(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos"))))))
             .then(Commands.literal("limit")
                 .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 1_000_000))
                     .executes(ctx -> limit(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"))))));
@@ -61,6 +69,27 @@ public final class PathCommand {
         return ticks;
     }
 
+    private static int watchList(CommandSourceStack source) {
+        for (String line : LiveWatch.list()) {
+            source.sendSuccess(() -> Component.literal(line), false);
+        }
+        return LiveWatch.watches().size();
+    }
+
+    /** {@code /path watch stop [x y z]}: stops every watch, or the one with that trigger. */
+    private static int watchStop(CommandSourceStack source, BlockPos pos) {
+        int n = 0;
+        for (Watched w : LiveWatch.watches()) {
+            if (pos == null || w.trigger().equals(pos)) {
+                LiveWatch.stop(w);
+                n++;
+            }
+        }
+        int stopped = n;
+        source.sendSuccess(() -> Component.literal(stopped == 0 ? "No such watch." : "Stopped " + stopped + " watch" + (stopped == 1 ? "" : "es") + "."), false);
+        return stopped;
+    }
+
     private static int machine(CommandSourceStack source, BlockPos pos) throws CommandSyntaxException {
         try {
             MachineRecorder.start(source.getLevel(), pos, PathSettings.tickLimit, PathSettings.kick, new MachineRecorder.Listener() {
@@ -72,6 +101,14 @@ public final class PathCommand {
                     // step 3: the same machine in a ghost, compared with what was just recorded
                     for (String line : GhostCheck.run(source.getLevel(), recording).lines()) {
                         source.sendSuccess(() -> Component.literal(line), false);
+                    }
+                    // step 4: the machine is watched; a real change at its footprint reruns it in a fresh ghost
+                    if (recording.limitHit()) {
+                        source.sendSuccess(() -> Component.literal("Not watched: the recording stopped at the tick limit."), false);
+                    } else if (PathSettings.watchAfterMachine) {
+                        LiveWatch.watch(recording, line -> source.sendSuccess(() -> Component.literal(line), false));
+                        source.sendSuccess(() -> Component.literal("Watching " + pos.toShortString() + ": a block change at its footprint reruns it"
+                            + " in a ghost after " + LiveWatch.QUIET_TICKS + " quiet ticks (/path watch list, /path watch stop)."), false);
                     }
                 }
 

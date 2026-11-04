@@ -114,23 +114,98 @@ public final class GhostCopy {
      * restores the world but not these (they move on while it runs), so the ghost check starts the ghost from the state at
      * the recording's start. {@link #NOW} copies the real level's current state (step 2).
      *
-     * @param weather the weather to start with, or null for the real level's weather now
-     * @param clocks  the world clocks to start with, or null for the real level's clocks now
+     * <p>The game time too (step 3 ruling): the ghost's game time is the real game time at the recording's start, not at
+     * the copy, because some blocks act on {@code gameTime % n} (the daylight detector, {@code DaylightDetectorBlock.java:111}).
+     * Everything the copy takes from the real level that is an absolute game time is moved by the same difference
+     * ({@code gameTime - real game time}): the pending scheduled ticks' trigger ticks (so every remaining delay is kept),
+     * the hopper's {@code tickedGameTime}, a moving piston's {@code lastTicked}, an entity's {@code pistonDeltasGameTime}.
+     *
+     * @param weather  the weather to start with, or null for the real level's weather now
+     * @param clocks   the world clocks to start with, or null for the real level's clocks now
+     * @param gameTime the game time to start with, or null for the real level's game time now
      */
-    public record Start(@org.jspecify.annotations.Nullable Weather weather, @org.jspecify.annotations.Nullable PackedClockStates clocks) {
-        public static final Start NOW = new Start(null, null);
+    public record Start(@org.jspecify.annotations.Nullable Weather weather, @org.jspecify.annotations.Nullable PackedClockStates clocks,
+                        @org.jspecify.annotations.Nullable Long gameTime) {
+        public static final Start NOW = new Start(null, null, null);
+
+        public Start(@org.jspecify.annotations.Nullable Weather weather, @org.jspecify.annotations.Nullable PackedClockStates clocks) {
+            this(weather, clocks, null);
+        }
     }
 
     public static Report copy(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
         try {
-            return copyInto(real, ghost, min, max, start);
+            Prepared prepared = prepare(real, ghost, min, max, start);
+            prepared.waitBlocking();
+            return prepared.finish();
         } catch (RuntimeException e) {
             ghost.discard();
             throw e;
         }
     }
 
-    private static Report copyInto(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
+    /**
+     * A copy in two steps, so that a caller can wait for the ghost's chunks without blocking the server (the live rerun,
+     * step 4): {@link #prepare} adds the tickets, {@link Prepared#poll} (once per server tick) runs the ghost's own chunk
+     * work and says when the ghost chunks are at the real chunks' levels, {@link Prepared#finish} copies the contents in
+     * one go (so the copy is one consistent moment of the real world). {@link #copy} is both, with a blocking wait. If a
+     * step throws, the caller discards the ghost.
+     */
+    public static final class Prepared {
+        private final ServerLevel real;
+        private final GhostLevel ghost;
+        private final List<ChunkPos> chunks;
+        private final Map<Long, int[]> levels;
+        private final Start start;
+
+        private Prepared(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Map<Long, int[]> levels, Start start) {
+            this.real = real;
+            this.ghost = ghost;
+            this.chunks = chunks;
+            this.levels = levels;
+            this.start = start;
+        }
+
+        /** Blocks (server thread, managed) until the ghost chunks have the real chunks' levels and status; at most 20 s. */
+        void waitBlocking() {
+            for (ChunkPos c : this.chunks) {
+                if (this.ghost.getChunkSource().getChunk(c.x(), c.z(), ChunkStatus.FULL, true) == null) {
+                    throw new IllegalStateException("ghost copy: ghost chunk " + c + " did not load");
+                }
+            }
+            this.ghost.pump(this::reached, "ghost chunks to reach the real chunks' levels and status");
+        }
+
+        /** Runs the ghost's own pending chunk and entity-section work once; true when the ghost chunks match the real ones. */
+        public boolean poll() {
+            this.ghost.pollOnce();
+            return this.reached();
+        }
+
+        private boolean reached() {
+            DistanceManager ghostLevels = this.ghost.getChunkSource().chunkMap.getDistanceManager();
+            for (ChunkPos c : this.chunks) {
+                long k = c.pack();
+                int[] want = this.levels.get(k);
+                if (this.ghost.getChunkSource().getChunkNow(c.x(), c.z()) == null
+                    || ghostLevels.getChunkLevel(k, false) != want[0] || ghostLevels.getChunkLevel(k, true) != want[1]
+                    || !this.ghost.areEntitiesLoaded(k)
+                    || this.ghost.getChunkSource().isPositionTicking(k) != this.real.getChunkSource().isPositionTicking(k)
+                    || this.ghost.areEntitiesActuallyLoadedAndTicking(c) != this.real.areEntitiesActuallyLoadedAndTicking(c)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /** Copies the contents. The real chunks must still be loaded (FULL, with entities), else it throws. */
+        public Report finish() {
+            return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start);
+        }
+    }
+
+    /** Checks the rectangle, marks the ghost as copied into and adds the tickets (no waiting). */
+    public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
         }
@@ -140,16 +215,31 @@ public final class GhostCopy {
                 chunks.add(new ChunkPos(x, z));
             }
         }
+        checkRealLoaded(real, chunks);
+        if (!ghost.markCopied(chunks)) {
+            throw new IllegalStateException("ghost copy: the ghost is not empty (one copy per ghost)");
+        }
+        return new Prepared(real, ghost, chunks, addTickets(real, ghost, chunks), start);
+    }
+
+    private static void checkRealLoaded(ServerLevel real, List<ChunkPos> chunks) {
         for (ChunkPos c : chunks) {
             if (real.getChunkSource().getChunkNow(c.x(), c.z()) == null || !real.areEntitiesLoaded(c.pack())) {
                 throw new IllegalStateException("ghost copy: real chunk " + c + " is not loaded (FULL, with entities)");
             }
         }
-        if (!ghost.markCopied(chunks)) {
-            throw new IllegalStateException("ghost copy: the ghost is not empty (one copy per ghost)");
+    }
+
+    private static Report copyContents(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Map<Long, int[]> levels, Start start) {
+        if (CauseTracker.active() != null) {
+            throw new IllegalStateException("ghost copy during a recording");
         }
-        Map<Long, int[]> levels = copyTicketLevels(real, ghost, chunks);
-        ghost.ghostData().setGameTime(real.getGameTime());
+        checkRealLoaded(real, chunks);
+        // the ghost's game time is the one asked for (the recording's start); every absolute game time taken from the real
+        // level moves by the same difference, so remaining delays and "ticked this game tick" comparisons are kept
+        long gameTime = start.gameTime() != null ? start.gameTime() : real.getGameTime();
+        long shift = gameTime - real.getGameTime();
+        ghost.ghostData().setGameTime(gameTime);
         ghost.setClock(start.clocks() != null ? start.clocks() : real.clockManager().packState());
 
         int sections = 0;
@@ -157,11 +247,11 @@ public final class GhostCopy {
             sections += copyChunk(real, ghost, c);
         }
         ghost.flushLight();
-        int blockEntities = copyBlockEntities(real, ghost, chunks);
+        int blockEntities = copyBlockEntities(real, ghost, chunks, shift);
         BoundingBox box = new BoundingBox(chunks.getFirst().getMinBlockX(), real.getMinY(), chunks.getFirst().getMinBlockZ(),
             chunks.getLast().getMaxBlockX(), real.getMaxY(), chunks.getLast().getMaxBlockZ());
-        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block");
-        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid");
+        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block", shift);
+        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid", shift);
         // copyAreaFrom renumbers sub-tick order above the source's max (LevelTicks.java:264-269), not from the ghost's
         // own counter (Level.java:1088-1089): move the counter past them, so a tick the ghost schedules later sorts after
         // them, as a new tick does in the real level.
@@ -177,7 +267,7 @@ public final class GhostCopy {
                 blockEvents++;
             }
         }
-        int[] entityCounts = copyEntities(real, ghost, box);
+        int[] entityCounts = copyEntities(real, ghost, box, shift);
         copyWeather(real, ghost, start.weather());
         Report report = new Report(chunks.size(), sections, blockEntities, blockTicks, fluidTicks, blockEvents, entityCounts[0], entityCounts[1],
             entityCounts[2], ghost.getGameTime(), levels);
@@ -191,7 +281,7 @@ public final class GhostCopy {
      * Real levels (DistanceManager.java:143) come from tickets spread out by one level per chunk (Chebyshev distance), so
      * a ticket at each copied chunk at its own real level gives every copied chunk exactly its real level in the ghost.
      */
-    private static Map<Long, int[]> copyTicketLevels(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks) {
+    private static Map<Long, int[]> addTickets(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks) {
         DistanceManager realLevels = real.getChunkSource().chunkMap.getDistanceManager();
         Map<Long, int[]> levels = new LinkedHashMap<>();
         for (ChunkPos c : chunks) {
@@ -203,25 +293,6 @@ public final class GhostCopy {
                 ghost.getChunkSource().addTicket(new Ticket(GhostPath.GHOST_SIMULATION_TICKET, simulation), c);
             }
         }
-        for (ChunkPos c : chunks) {
-            if (ghost.getChunkSource().getChunk(c.x(), c.z(), ChunkStatus.FULL, true) == null) {
-                throw new IllegalStateException("ghost copy: ghost chunk " + c + " did not load");
-            }
-        }
-        DistanceManager ghostLevels = ghost.getChunkSource().chunkMap.getDistanceManager();
-        ghost.pump(() -> {
-            for (ChunkPos c : chunks) {
-                long k = c.pack();
-                int[] want = levels.get(k);
-                if (ghostLevels.getChunkLevel(k, false) != want[0] || ghostLevels.getChunkLevel(k, true) != want[1]
-                    || !ghost.areEntitiesLoaded(k)
-                    || ghost.getChunkSource().isPositionTicking(k) != real.getChunkSource().isPositionTicking(k)
-                    || ghost.areEntitiesActuallyLoadedAndTicking(c) != real.areEntitiesActuallyLoadedAndTicking(c)) {
-                    return false;
-                }
-            }
-            return true;
-        }, "ghost chunks to reach the real chunks' levels and status");
         return levels;
     }
 
@@ -265,7 +336,7 @@ public final class GhostCopy {
     }
 
     /** Block entities in the order they tick in the real level (Level.java:111-113, 533-539), then the non-ticking ones. */
-    private static int copyBlockEntities(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks) {
+    private static int copyBlockEntities(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, long shift) {
         Set<Long> keys = new java.util.HashSet<>();
         chunks.forEach(c -> keys.add(c.pack()));
         Set<BlockPos> order = new LinkedHashSet<>();
@@ -292,13 +363,13 @@ public final class GhostCopy {
                 throw new IllegalStateException("ghost copy: block entity at " + pos + " could not be loaded from its NBT");
             }
             if (from instanceof HopperBlockEntity && to instanceof HopperBlockEntity) {
-                ((HopperBlockEntityAccessor) to).ghostpath$setTickedGameTime(((HopperBlockEntityAccessor) from).ghostpath$tickedGameTime());
+                ((HopperBlockEntityAccessor) to).ghostpath$setTickedGameTime(((HopperBlockEntityAccessor) from).ghostpath$tickedGameTime() + shift);
             }
             if (from instanceof PistonMovingBlockEntity && to instanceof PistonMovingBlockEntity) {
                 GhostPistonAccessor f = (GhostPistonAccessor) from;
                 GhostPistonAccessor t = (GhostPistonAccessor) to;
                 t.ghostpath$setProgressO(f.ghostpath$progressO());
-                t.ghostpath$setLastTicked(f.ghostpath$lastTicked());
+                t.ghostpath$setLastTicked(f.ghostpath$lastTicked() + shift);
                 t.ghostpath$setDeathTicks(f.ghostpath$deathTicks());
             }
             ghost.setBlockEntity(to);
@@ -309,21 +380,35 @@ public final class GhostCopy {
 
     // ---- ticks ----
 
+    /**
+     * What {@code LevelTicks.copyAreaFrom} does (LevelTicks.java:258-272: sub-tick order renumbered above the source's max,
+     * the relative order kept), except that every trigger tick moves by {@code shift}, so each tick keeps its remaining
+     * delay when the ghost's game time is not the real one. Drain sets are empty between ticks (the copy runs after all
+     * levels ticked), so the containers hold everything; the count is asserted (R3).
+     */
     @SuppressWarnings("unchecked")
-    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what) {
-        long expected = 0;
+    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what, long shift) {
+        List<ScheduledTick<T>> toAdd = new ArrayList<>();
         for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : ((LevelTicksAccessor<T>) from).ghostpath$allContainers().long2ObjectEntrySet()) {
-            expected += e.getValue().getAll().filter(t -> box.isInside(t.pos())).count();
+            e.getValue().getAll().filter(t -> box.isInside(t.pos())).forEach(toAdd::add);
         }
         int before = to.count();
         if (before != 0) {
             throw new IllegalStateException("ghost copy: ghost already has " + before + " " + what + " ticks");
         }
-        to.copyAreaFrom(from, box, BlockPos.ZERO);
+        long min = Long.MAX_VALUE;
+        long max = Long.MIN_VALUE;
+        for (ScheduledTick<T> t : toAdd) {
+            min = Math.min(min, t.subTickOrder());
+            max = Math.max(max, t.subTickOrder());
+        }
+        for (ScheduledTick<T> t : toAdd) {
+            to.schedule(new ScheduledTick<>(t.type(), t.pos(), t.triggerTick() + shift, t.priority(), t.subTickOrder() - min + max + 1L));
+        }
         int copied = to.count();
-        if (copied != expected) {
+        if (copied != toAdd.size()) {
             // LevelTicks.schedule drops a tick whose chunk container is missing (LevelTicks.java:71-79); ruling R3: fail loudly
-            throw new IllegalStateException("ghost copy: " + what + " ticks dropped: " + copied + " of " + expected + " copied");
+            throw new IllegalStateException("ghost copy: " + what + " ticks dropped: " + copied + " of " + toAdd.size() + " copied");
         }
         return copied;
     }
@@ -349,7 +434,7 @@ public final class GhostCopy {
      * Warden.java:289, ElderGuardian.java:67, Phantom.java:106), and gets the transient state NBT does not hold.
      * Returns {copied, skipped, randoms not copied}.
      */
-    private static int[] copyEntities(ServerLevel real, GhostLevel ghost, BoundingBox box) {
+    private static int[] copyEntities(ServerLevel real, GhostLevel ghost, BoundingBox box, long shift) {
         List<Entity> roots = new ArrayList<>();
         Set<UUID> seen = new java.util.HashSet<>();
         ((GhostServerLevelAccessor) real).ghostpath$entityTickList().forEach(e -> {
@@ -389,7 +474,7 @@ public final class GhostCopy {
                 Entity r = byId.get(g.getUUID());
                 if (r != null) {
                     g.setId(r.getId());
-                    if (!copyTransient(r, g)) {
+                    if (!copyTransient(r, g, shift)) {
                         randoms[0]++;
                     }
                 }
@@ -406,7 +491,7 @@ public final class GhostCopy {
     }
 
     /** Entity state outside NBT (Entity.java:221-305 and subclasses). Returns false if the own random could not be copied. */
-    private static boolean copyTransient(Entity r, Entity g) {
+    private static boolean copyTransient(Entity r, Entity g, long shift) {
         g.setPosRaw(r.getX(), r.getY(), r.getZ());
         g.setDeltaMovement(r.getDeltaMovement());
         g.setBoundingBox(r.getBoundingBox());
@@ -442,7 +527,7 @@ public final class GhostCopy {
         ga.ghostpath$setWasEyeInWater(ra.ghostpath$wasEyeInWater());
         ga.ghostpath$setFirstTick(ra.ghostpath$firstTick());
         System.arraycopy(ra.ghostpath$pistonDeltas(), 0, ga.ghostpath$pistonDeltas(), 0, 3);
-        ga.ghostpath$setPistonDeltasGameTime(ra.ghostpath$pistonDeltasGameTime());
+        ga.ghostpath$setPistonDeltasGameTime(ra.ghostpath$pistonDeltasGameTime() + shift);
         ga.ghostpath$setOnGroundNoBlocks(ra.ghostpath$onGroundNoBlocks());
         ga.ghostpath$setLastKnownSpeed(ra.ghostpath$lastKnownSpeed());
         ga.ghostpath$setLastKnownPosition(ra.ghostpath$lastKnownPosition());

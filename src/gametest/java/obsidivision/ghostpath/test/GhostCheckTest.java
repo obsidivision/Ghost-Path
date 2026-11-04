@@ -26,7 +26,11 @@ import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.DispenserBlock;
 import net.minecraft.world.level.block.HopperBlock;
+import net.minecraft.world.level.block.DaylightDetectorBlock;
 import net.minecraft.world.level.block.LeverBlock;
+import net.minecraft.world.level.block.RedstoneLampBlock;
+import net.minecraft.world.level.block.RepeaterBlock;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.entity.DispenserBlockEntity;
 import net.minecraft.world.level.block.entity.HopperBlockEntity;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
@@ -357,6 +361,163 @@ public class GhostCheckTest {
                 }
             }
         })), 0);
+    }
+
+    // ---- step 3 ruling: the ghost's game time is the recording's start ----------------------------------------------
+
+    /**
+     * Ruling "game time": the ghost's game time is the real game time at the RECORDING START, and each copied pending tick
+     * keeps its remaining delay (its trigger tick moves by the same difference). The daylight detector acts on
+     * {@code gameTime % 20} (DaylightDetectorBlock.java:111), so a ghost whose game time was shifted by anything but a
+     * multiple of 20 would flip it on another tick.
+     *
+     * <p>Machine: a lever on stone (on), a repeater (delay 1) and a redstone lamp lit by it; a daylight detector next to
+     * the lamp, its power set to a wrong value so that its ticker flips it on the first game tick with
+     * {@code gameTime % 20 == 0}. The recording starts at {@code gameTime % 20 == 19}, so the flip is the first tick of the run
+     * (t+1), before the repeater turns off (t+2): the lamp then sees the detector's final power when it loses the repeater's
+     * (a chain tick is scheduled or not, depending on it). The recording leaves the detector flipped (it is not chain work,
+     * the scoped restore leaves it); the test puts it back to its value at the start before the check, which is the world
+     * the recording started from. The check must report exact; with the offset left out ({@code leaveGameTimeOffsetOut})
+     * the ghost flips the detector on another tick relative to the run and the check must notice.
+     */
+    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_daylight")
+    public void daylightDetectorMachineGhostIsExact(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        PathSettings.kick = true;
+        prepare(helper, 8, 6);
+        helper.setBlock(new BlockPos(0, 2, 2), Blocks.STONE);
+        helper.setBlock(new BlockPos(0, 3, 2), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR).setValue(LeverBlock.POWERED, true));
+        helper.setBlock(new BlockPos(1, 2, 2), Blocks.REPEATER.defaultBlockState().setValue(RepeaterBlock.FACING, Direction.WEST).setValue(RepeaterBlock.DELAY, 1));
+        helper.setBlock(new BlockPos(2, 2, 2), Blocks.REDSTONE_LAMP);
+        helper.setBlock(new BlockPos(2, 2, 3), Blocks.DAYLIGHT_DETECTOR);
+        BlockPos lever = helper.absolutePos(new BlockPos(0, 3, 2));
+        BlockPos lamp = helper.absolutePos(new BlockPos(2, 2, 2));
+        BlockPos detector = helper.absolutePos(new BlockPos(2, 2, 3));
+        whenTicking(helper, CORNERS, TestSupport.once(() -> TestSupport.whenSavesFree(helper, () -> TestSupport.later(helper, 60, () -> {
+            int settled = level.getBlockState(detector).getValue(DaylightDetectorBlock.POWER);
+            int wrong = settled == 0 ? 5 : 0;
+            helper.assertTrue(level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT), "the lamp is not lit before the recording");
+            LOG.info("[ghostpath] daylight machine: detector settled at power {}, set to {} before the recording", settled, wrong);
+            whenGameTimeEnds19(helper, level, TestSupport.once(() -> {
+                BlockState wrongState = level.getBlockState(detector).setValue(DaylightDetectorBlock.POWER, wrong);
+                level.setBlock(detector, wrongState, 2);
+                record(helper, level, lever, rec -> {
+                    try {
+                        helper.assertTrue(rec.startGameTime() % 20 == 19, "recording did not start at gameTime % 20 == 19: " + rec.startGameTime());
+                        helper.assertTrue(level.getBlockState(detector).getValue(DaylightDetectorBlock.POWER) == settled,
+                            "the real detector did not flip during the recording: " + level.getBlockState(detector));
+                        helper.assertTrue(rec.footprint().contains(detector), "the chain never read the detector");
+                        // the world as the recording started from it: the flip is not chain work and stays after the restore
+                        level.setBlock(detector, wrongState, 2);
+                        long offset = level.getGameTime() - rec.startGameTime();
+                        helper.assertTrue(offset % 20 != 0, "game time moved by a multiple of 20 (" + offset + "): the test would prove nothing");
+                        GhostCheck.Result exact = GhostCheck.run(level, rec);
+                        LOG.info("[ghostpath] daylight machine, {} ticks recorded, offset {}:\n{}", rec.ticks(), offset, String.join("\n", exact.lines()));
+                        assertExact(helper, rec, exact);
+                        level.setBlock(detector, wrongState, 2);
+                        GhostCheck.Options leaveOut = options();
+                        leaveOut.leaveGameTimeOffsetOut = true;
+                        GhostCheck.Result broken = GhostCheck.run(level, rec, leaveOut);
+                        LOG.info("[ghostpath] break-it 'game time offset left out': {}", broken.lines().getFirst());
+                        helper.assertTrue(broken.ran() && !broken.exact() && broken.first() != null,
+                            "with the game time offset left out the check still says exact:\n" + String.join("\n", broken.lines()));
+                        helper.succeed();
+                    } finally {
+                        CauseTrackingTest.forceChunks(helper, false);
+                    }
+                });
+            }), 0);
+        }))), 0);
+    }
+
+    private static void whenGameTimeEnds19(GameTestHelper helper, ServerLevel level, Runnable then, int waited) {
+        if (level.getGameTime() % 20 == 19) {
+            then.run();
+        } else if (waited > 100) {
+            helper.fail("game time never reached 19 mod 20");
+        } else {
+            TestSupport.later(helper, 1, () -> whenGameTimeEnds19(helper, level, then, waited + 1));
+        }
+    }
+
+    /**
+     * Copied pending ticks keep their remaining delay when the ghost's game time is not the real one: a repeater chain is
+     * copied mid-pulse into a ghost whose game time is 1000 less; every pending block tick has the same remaining delay
+     * ({@code triggerTick - gameTime}) in both, and so does the lamp at the end of the chain on the same relative tick.
+     */
+    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_shift")
+    public void copiedTicksKeepTheirRemainingDelayWithShiftedGameTime(GameTestHelper helper) throws java.io.IOException {
+        ServerLevel level = helper.getLevel();
+        prepare(helper, 8, 6);
+        int[] delays = {1, 3, 2, 4};
+        for (int i = 0; i < delays.length; i++) {
+            helper.setBlock(new BlockPos(1 + i, 2, 2), Blocks.REPEATER.defaultBlockState().setValue(RepeaterBlock.FACING, Direction.WEST).setValue(RepeaterBlock.DELAY, delays[i]));
+        }
+        helper.setBlock(new BlockPos(5, 2, 2), Blocks.REDSTONE_LAMP);
+        BlockPos lamp = helper.absolutePos(new BlockPos(5, 2, 2));
+        whenTicking(helper, CORNERS, TestSupport.once(() -> TestSupport.whenSavesFree(helper, () -> {
+            helper.setBlock(new BlockPos(0, 2, 2), Blocks.REDSTONE_BLOCK);
+            TestSupport.later(helper, 2, () -> helper.setBlock(new BlockPos(0, 2, 2), Blocks.AIR));
+            TestSupport.later(helper, 6, () -> {
+                long shift = -1000;
+                GhostLevel ghost;
+                ChunkPos lo = ChunkPos.containing(helper.absolutePos(new BlockPos(-1, 2, 0)));
+                ChunkPos hi = ChunkPos.containing(helper.absolutePos(new BlockPos(8, 2, 6)));
+                try {
+                    ghost = GhostLevel.create(level);
+                    GhostCopy.copy(level, ghost, lo, hi, new GhostCopy.Start(null, null, level.getGameTime() + shift));
+                } catch (java.io.IOException e) {
+                    helper.fail("ghost: " + e);
+                    return;
+                }
+                try {
+                    List<Long> real = remainingDelays(level, lo, hi);
+                    List<Long> copy = remainingDelays(ghost, lo, hi);
+                    LOG.info("[ghostpath] shifted copy: remaining delays real {} ghost {}, game time real {} ghost {}", real, copy, level.getGameTime(), ghost.getGameTime());
+                    helper.assertTrue(!real.isEmpty(), "no pending ticks at the copy: not mid-pulse");
+                    helper.assertTrue(ghost.getGameTime() == level.getGameTime() + shift, "ghost game time " + ghost.getGameTime());
+                    helper.assertTrue(real.equals(copy), "remaining delays differ: real " + real + ", ghost " + copy);
+                    int[] on = {-1, -1};
+                    long startReal = level.getGameTime();
+                    long startGhost = ghost.getGameTime();
+                    for (int i = 0; i < 40; i++) {
+                        ghost.tickGhost();
+                        if (on[1] < 0 && ghost.getBlockState(lamp).getValue(RedstoneLampBlock.LIT)) {
+                            on[1] = i + 1;
+                        }
+                    }
+                    for (int i = 0; i < 40; i++) {
+                        TestSupport.later(helper, i + 1, () -> {
+                            if (on[0] < 0 && level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT)) {
+                                on[0] = (int) (level.getGameTime() - startReal);
+                            }
+                        });
+                    }
+                    TestSupport.later(helper, 42, () -> {
+                        ghost.discard();
+                        CauseTrackingTest.forceChunks(helper, false);
+                        LOG.info("[ghostpath] shifted copy: lamp lit after +{} real, +{} ghost", on[0], on[1]);
+                        helper.assertTrue(on[0] > 0 && on[0] == on[1], "lamp lit on different ticks: real +" + on[0] + ", ghost +" + on[1]);
+                        helper.succeed();
+                    });
+                } catch (RuntimeException e) {
+                    ghost.discard();
+                    throw e;
+                }
+            });
+        })), 0);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Long> remainingDelays(ServerLevel level, ChunkPos lo, ChunkPos hi) {
+        List<Long> out = new ArrayList<>();
+        for (var tickContainer : ((obsidivision.ghostpath.mixin.LevelTicksAccessor<Object>) (Object) level.getBlockTicks()).ghostpath$allContainers().values()) {
+            // only the copied chunks: other tests' leftovers sit elsewhere in the level
+            tickContainer.getAll().filter(t -> (t.pos().getX() >> 4) >= lo.x() && (t.pos().getX() >> 4) <= hi.x()
+                && (t.pos().getZ() >> 4) >= lo.z() && (t.pos().getZ() >> 4) <= hi.z()).forEach(t -> out.add(t.triggerTick() - level.getGameTime()));
+        }
+        java.util.Collections.sort(out);
+        return out;
     }
 
     // ---- break-it: the check has to notice ----------------------------------------------------------------------

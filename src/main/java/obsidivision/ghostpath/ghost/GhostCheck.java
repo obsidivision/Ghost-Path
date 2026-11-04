@@ -64,6 +64,11 @@ public final class GhostCheck {
         public @Nullable Long seedOverride;
         /** Test hook: TNT kick setting for the ghost instead of the recording's. */
         public @Nullable Boolean kickOverride;
+        /**
+         * Test hook (break-it): the ghost keeps the real game time of the copy instead of the recording's start, and the
+         * copied ticks' trigger ticks are not shifted. Never set outside tests.
+         */
+        public boolean leaveGameTimeOffsetOut;
     }
 
     /**
@@ -113,6 +118,7 @@ public final class GhostCheck {
 
     /** Runs the check; never throws (a failure is a "not run" result). */
     public static Result run(ServerLevel real, Recording rec, Options options) {
+        obsidivision.ghostpath.watch.LiveWatch.preempt(); // one ghost at a time
         Result result;
         try {
             result = runChecked(real, rec, options);
@@ -140,7 +146,8 @@ public final class GhostCheck {
         }
         GhostLevel.resetStrayPackets();
         GhostLevel ghost = GhostLevel.create(real);
-        GhostCopy.copy(real, ghost, rect[0], rect[1], new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart()));
+        GhostCopy.copy(real, ghost, rect[0], rect[1], new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(),
+            options.leaveGameTimeOffsetOut ? null : rec.startGameTime()));
         GhostRun run;
         try {
             if (options.afterCopy != null) {
@@ -188,25 +195,90 @@ public final class GhostCheck {
      * footprint's own rectangle has a chunk that is not loaded.
      */
     private static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, Recording rec) {
+        return chooseRectangle(real, rec.footprint(), rec.heightmapColumns(), rec.entityAreas(), null);
+    }
+
+    /**
+     * The same choice for any footprint (the live rerun uses it with the footprint of its last run). {@code mustInclude}
+     * (chunk x min, z min, x max, z max) is a rectangle the result has to cover as well (a rerun that grows its area keeps
+     * what it had).
+     */
+    public static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, java.util.Collection<BlockPos> footprint,
+                                                         Set<CauseTracker.Column> columns, Set<AABB> areas, int @Nullable [] mustInclude) {
+        return chooseRectangle(real, footprint, columns, areas, mustInclude, 1);
+    }
+
+    /**
+     * As above with a margin of up to {@code margin} chunks around the footprint (the largest that is entirely loaded,
+     * then smaller ones, then none). A live rerun that found the chain reaching beyond its area widens with a margin of
+     * several chunks, because the first run's footprint stops where the copied area stops.
+     */
+    public static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, java.util.Collection<BlockPos> footprint,
+                                                         Set<CauseTracker.Column> columns, Set<AABB> areas, int @Nullable [] mustInclude, int margin) {
         int[] core = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
-        for (BlockPos p : rec.footprint()) {
+        for (BlockPos p : footprint) {
             include(core, p.getX() >> 4, p.getZ() >> 4);
         }
-        for (CauseTracker.Column c : rec.heightmapColumns()) {
+        for (CauseTracker.Column c : columns) {
             include(core, c.x() >> 4, c.z() >> 4);
         }
+        if (mustInclude != null) {
+            include(core, mustInclude[0], mustInclude[1]);
+            include(core, mustInclude[2], mustInclude[3]);
+        }
+        if (core[0] == Integer.MAX_VALUE) {
+            return null;
+        }
         int[] withAreas = core.clone();
-        for (AABB box : rec.entityAreas()) {
+        for (AABB box : areas) {
             include(withAreas, BlockPos.containing(box.minX, box.minY, box.minZ).getX() >> 4, BlockPos.containing(box.minX, box.minY, box.minZ).getZ() >> 4);
             include(withAreas, BlockPos.containing(box.maxX, box.maxY, box.maxZ).getX() >> 4, BlockPos.containing(box.maxX, box.maxY, box.maxZ).getZ() >> 4);
         }
-        int[][] candidates = {grow(withAreas, 1), withAreas, grow(core, 1), core};
+        List<int[]> candidates = new ArrayList<>();
+        if (margin > 1) {
+            candidates.add(growLoaded(real, withAreas, margin));
+        }
+        candidates.add(grow(withAreas, 1));
+        candidates.add(withAreas);
+        candidates.add(grow(core, 1));
+        candidates.add(core);
         for (int[] c : candidates) {
             if (allLoaded(real, c)) {
                 return new ChunkPos[] {new ChunkPos(c[0], c[1]), new ChunkPos(c[2], c[3])};
             }
         }
         return null;
+    }
+
+    /**
+     * {@code r} grown by up to {@code margin} chunks on each side, each side as far as the chunks it adds are loaded
+     * (FULL, with entities). {@code r} itself must be loaded, else it is returned as it is (the caller's check fails).
+     */
+    private static int[] growLoaded(ServerLevel real, int[] r, int margin) {
+        int[] out = r.clone();
+        if (!allLoaded(real, out)) {
+            return out;
+        }
+        for (int step = 0; step < margin; step++) {
+            for (int side = 0; side < 4; side++) {
+                // one chunk on this side, if the whole strip it adds is loaded; the sides are extended one after the other
+                int[] strip = switch (side) {
+                    case 0 -> new int[] {out[0] - 1, out[1], out[0] - 1, out[3]};
+                    case 1 -> new int[] {out[2] + 1, out[1], out[2] + 1, out[3]};
+                    case 2 -> new int[] {out[0], out[1] - 1, out[2], out[1] - 1};
+                    default -> new int[] {out[0], out[3] + 1, out[2], out[3] + 1};
+                };
+                if (allLoaded(real, strip)) {
+                    switch (side) {
+                        case 0 -> out[0]--;
+                        case 1 -> out[2]++;
+                        case 2 -> out[1]--;
+                        default -> out[3]++;
+                    }
+                }
+            }
+        }
+        return out;
     }
 
     private static void include(int[] r, int x, int z) {
