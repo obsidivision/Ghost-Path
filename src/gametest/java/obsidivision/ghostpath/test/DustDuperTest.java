@@ -29,8 +29,8 @@ public class DustDuperTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
     static final String FILE = "/schematics/dust-duper-10-compression.litematic";
 
-    /** Where the machine's lowest corner sits in the test structure: 40 blocks above the floor, so nothing is under it and the TNT have room to fall and fly. */
-    static final BlockPos ORIGIN = new BlockPos(2, 42, 2);
+    /** Where the machine's lowest corner sits in the test structure: 100 blocks above the floor, so nothing is under it and the TNT have room to fall and fly. */
+    static final BlockPos ORIGIN = new BlockPos(2, 100, 2);
 
     static Litematic load() {
         try (InputStream in = DustDuperTest.class.getResourceAsStream(FILE)) {

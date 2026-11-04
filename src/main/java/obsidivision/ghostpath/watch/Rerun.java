@@ -73,8 +73,9 @@ final class Rerun {
         this.createNanos = System.nanoTime() - t0;
         try {
             Recording rec = watch.recording();
+            // a widened run (the chain reached beyond the first area) takes the chunks that are not loaded from the save
             this.prepared = GhostCopy.prepare(real, this.ghost, min, max,
-                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()));
+                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened, java.util.Set.of());
         } catch (RuntimeException e) {
             this.ghost.discard();
             throw e;
@@ -97,7 +98,7 @@ final class Rerun {
         try {
             if (this.tracker == null) {
                 if (System.nanoTime() - this.createdNanos > WAIT_LIMIT_NANOS) {
-                    throw new IllegalStateException("timed out waiting for the ghost chunks");
+                    throw new IllegalStateException("timed out waiting for the ghost chunks: " + this.prepared.describeNotReady());
                 }
                 if (!this.prepared.poll()) {
                     return false;

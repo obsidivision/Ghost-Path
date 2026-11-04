@@ -54,7 +54,7 @@ public class ClientDuperGameTest implements FabricClientGameTest {
                         }
                     }
                 }
-                at[0] = new BlockPos(x, y + 41, z); // 40 blocks above the floor: the TNT fall and fly like in the game tests
+                at[0] = new BlockPos(x, y + 101, z); // 100 blocks above the floor: the TNT fall and fly like in the game tests
                 for (int dy = -40; dy <= 6; dy++) { // the compression column; the TNT fly east into it
                     level.setBlock(at[0].offset(24, dy, 1), Blocks.STONE.defaultBlockState(), 2 | 16);
                 }

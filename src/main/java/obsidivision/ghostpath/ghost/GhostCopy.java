@@ -157,13 +157,15 @@ public final class GhostCopy {
         private final List<ChunkPos> chunks;
         private final Map<Long, int[]> levels;
         private final Start start;
+        private final Set<Long> disk;
 
-        private Prepared(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Map<Long, int[]> levels, Start start) {
+        private Prepared(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Map<Long, int[]> levels, Start start, Set<Long> disk) {
             this.real = real;
             this.ghost = ghost;
             this.chunks = chunks;
             this.levels = levels;
             this.start = start;
+            this.disk = disk;
         }
 
         /** Blocks (server thread, managed) until the ghost chunks have the real chunks' levels and status; at most 20 s. */
@@ -187,6 +189,20 @@ public final class GhostCopy {
             for (ChunkPos c : this.chunks) {
                 long k = c.pack();
                 int[] want = this.levels.get(k);
+                if (this.disk.contains(k)) { // taken from the save: only the ghost's own state matters
+                    if (this.ghost.getChunkSource().getChunkNow(c.x(), c.z()) == null || !this.ghost.areEntitiesLoaded(k)) {
+                        return false;
+                    }
+                    continue;
+                }
+                if (!this.disk.isEmpty()) {
+                    // chunks taken from the save sit at an entity-ticking level and lift the levels of their neighbours (a rim chunk the real
+                    // level has at 33 is 32 here): with those, only "loaded in the ghost" can be checked
+                    if (this.ghost.getChunkSource().getChunkNow(c.x(), c.z()) == null || !this.ghost.areEntitiesLoaded(k)) {
+                        return false;
+                    }
+                    continue;
+                }
                 if (this.ghost.getChunkSource().getChunkNow(c.x(), c.z()) == null
                     || ghostLevels.getChunkLevel(k, false) != want[0] || ghostLevels.getChunkLevel(k, true) != want[1]
                     || !this.ghost.areEntitiesLoaded(k)
@@ -198,9 +214,27 @@ public final class GhostCopy {
             return true;
         }
 
+        /** For a timeout message: the chunks that are not ready, with why. */
+        public String describeNotReady() {
+            StringBuilder out = new StringBuilder();
+            DistanceManager ghostLevels = this.ghost.getChunkSource().chunkMap.getDistanceManager();
+            for (ChunkPos c : this.chunks) {
+                long k = c.pack();
+                boolean chunk = this.ghost.getChunkSource().getChunkNow(c.x(), c.z()) != null;
+                boolean entities = this.ghost.areEntitiesLoaded(k);
+                int[] want = this.levels.get(k);
+                int l0 = ghostLevels.getChunkLevel(k, false);
+                int l1 = ghostLevels.getChunkLevel(k, true);
+                if (!chunk || !entities || this.disk.isEmpty() && (l0 != want[0] || l1 != want[1])) {
+                    out.append(c).append(this.disk.contains(k) ? " (save)" : "").append(": chunk ").append(chunk).append(", entities ").append(entities).append(", levels ").append(l0).append('/').append(l1).append(" want ").append(want[0]).append('/').append(want[1]).append("; ");
+                }
+            }
+            return out.toString();
+        }
+
         /** Copies the contents. The real chunks must still be loaded (FULL, with entities), else it throws. */
         public Report finish() {
-            return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start);
+            return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start, this.disk);
         }
     }
 
@@ -211,8 +245,24 @@ public final class GhostCopy {
      */
     static final long POLL_SLICE_NANOS = 4_000_000L;
 
-    /** Checks the rectangle, marks the ghost as copied into and adds the tickets (no waiting). */
+    /** The level of an entity-ticking chunk (ChunkLevel.java:12, private): what a chunk taken from the save gets in the ghost. */
+    private static final int ENTITY_TICKING_LEVEL = 31;
+
+    /** Checks the rectangle, marks the ghost as copied into and adds the tickets (no waiting). Every chunk must be loaded in the real level. */
     public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start) {
+        return prepare(real, ghost, min, max, start, false, Set.of());
+    }
+
+    /**
+     * As above; with {@code allowDisk} a chunk that is not loaded in the real level (not FULL with entities) is taken from the real
+     * level's <b>save</b> instead, without loading it there (R9): its saved chunk data is read ({@code ChunkMap.read}, which also sees
+     * writes still queued) and written into the ghost's own throwaway storage, and the ghost loads it from there with its own chunk
+     * code (blocks, light, heightmaps, block entities, scheduled ticks as saved). It gets the levels of an entity-ticking chunk
+     * ("as if it were loaded": the preview shows where things would go, not that the real chunk would not tick). No entities (they are
+     * in another file), no block events, and nothing newer than the save. {@code forceDisk} (tests) treats those chunks as saved
+     * ones even if they are loaded.
+     */
+    public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start, boolean allowDisk, Set<ChunkPos> forceDisk) {
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
         }
@@ -222,11 +272,51 @@ public final class GhostCopy {
                 chunks.add(new ChunkPos(x, z));
             }
         }
-        checkRealLoaded(real, chunks);
+        Set<Long> disk = new java.util.HashSet<>();
+        List<ChunkPos> loaded = new ArrayList<>();
+        for (ChunkPos c : chunks) {
+            boolean isLoaded = real.getChunkSource().getChunkNow(c.x(), c.z()) != null && real.areEntitiesLoaded(c.pack());
+            if (forceDisk.contains(c) || allowDisk && !isLoaded) {
+                disk.add(c.pack());
+            } else {
+                loaded.add(c);
+            }
+        }
+        checkRealLoaded(real, loaded);
         if (!ghost.markCopied(chunks)) {
             throw new IllegalStateException("ghost copy: the ghost is not empty (one copy per ghost)");
         }
-        return new Prepared(real, ghost, chunks, addTickets(real, ghost, chunks), start);
+        if (!disk.isEmpty()) {
+            writeSavedChunks(real, ghost, chunks, disk);
+        }
+        return new Prepared(real, ghost, chunks, addTickets(real, ghost, chunks, disk), start, disk);
+    }
+
+    /** Reads the saved data of the disk chunks from the real level's chunk storage and writes it into the ghost's. */
+    private static void writeSavedChunks(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Set<Long> disk) {
+        List<ChunkPos> wanted = chunks.stream().filter(c -> disk.contains(c.pack())).toList();
+        List<java.util.concurrent.CompletableFuture<java.util.Optional<net.minecraft.nbt.CompoundTag>>> reads = new ArrayList<>();
+        for (ChunkPos c : wanted) {
+            reads.add(real.getChunkSource().chunkMap.read(c));
+        }
+        List<java.util.concurrent.CompletableFuture<Void>> writes = new ArrayList<>();
+        try {
+            for (int i = 0; i < wanted.size(); i++) {
+                java.util.Optional<net.minecraft.nbt.CompoundTag> tag = reads.get(i).get(20, java.util.concurrent.TimeUnit.SECONDS);
+                if (tag.isPresent()) { // never saved: the ghost generates it like the real level would (a void world)
+                    writes.add(ghost.getChunkSource().chunkMap.write(wanted.get(i), tag.get()));
+                }
+            }
+            for (java.util.concurrent.CompletableFuture<Void> w : writes) {
+                w.get(20, java.util.concurrent.TimeUnit.SECONDS);
+            }
+        } catch (java.util.concurrent.ExecutionException | java.util.concurrent.TimeoutException e) {
+            throw new IllegalStateException("ghost copy: could not read saved chunks: " + e, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("ghost copy: interrupted while reading saved chunks", e);
+        }
+        LOGGER.info("[ghostpath] ghost copy: {} chunks taken from the save ({} had saved data)", wanted.size(), writes.size());
     }
 
     private static void checkRealLoaded(ServerLevel real, List<ChunkPos> chunks) {
@@ -237,7 +327,8 @@ public final class GhostCopy {
         }
     }
 
-    private static Report copyContents(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Map<Long, int[]> levels, Start start) {
+    private static Report copyContents(ServerLevel real, GhostLevel ghost, List<ChunkPos> allChunks, Map<Long, int[]> levels, Start start, Set<Long> disk) {
+        List<ChunkPos> chunks = allChunks.stream().filter(c -> !disk.contains(c.pack())).toList();
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
         }
@@ -255,10 +346,10 @@ public final class GhostCopy {
         }
         ghost.flushLight();
         int blockEntities = copyBlockEntities(real, ghost, chunks, shift);
-        BoundingBox box = new BoundingBox(chunks.getFirst().getMinBlockX(), real.getMinY(), chunks.getFirst().getMinBlockZ(),
-            chunks.getLast().getMaxBlockX(), real.getMaxY(), chunks.getLast().getMaxBlockZ());
-        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block", shift);
-        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid", shift);
+        BoundingBox box = new BoundingBox(allChunks.getFirst().getMinBlockX(), real.getMinY(), allChunks.getFirst().getMinBlockZ(),
+            allChunks.getLast().getMaxBlockX(), real.getMaxY(), allChunks.getLast().getMaxBlockZ());
+        int blockTicks = copyTicks(real.getBlockTicks(), ghost.getBlockTicks(), box, "block", shift, !disk.isEmpty());
+        int fluidTicks = copyTicks(real.getFluidTicks(), ghost.getFluidTicks(), box, "fluid", shift, !disk.isEmpty());
         // copyAreaFrom renumbers sub-tick order above the source's max (LevelTicks.java:264-269), not from the ghost's
         // own counter (Level.java:1088-1089): move the counter past them, so a tick the ghost schedules later sorts after
         // them, as a new tick does in the real level.
@@ -276,7 +367,7 @@ public final class GhostCopy {
         }
         int[] entityCounts = copyEntities(real, ghost, box, shift);
         copyWeather(real, ghost, start.weather());
-        Report report = new Report(chunks.size(), sections, blockEntities, blockTicks, fluidTicks, blockEvents, entityCounts[0], entityCounts[1],
+        Report report = new Report(allChunks.size(), sections, blockEntities, blockTicks, fluidTicks, blockEvents, entityCounts[0], entityCounts[1],
             entityCounts[2], ghost.getGameTime(), levels);
         report.lines().forEach(l -> LOGGER.info("[ghostpath] {}", l));
         return report;
@@ -288,12 +379,13 @@ public final class GhostCopy {
      * Real levels (DistanceManager.java:143) come from tickets spread out by one level per chunk (Chebyshev distance), so
      * a ticket at each copied chunk at its own real level gives every copied chunk exactly its real level in the ghost.
      */
-    private static Map<Long, int[]> addTickets(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks) {
+    private static Map<Long, int[]> addTickets(ServerLevel real, GhostLevel ghost, List<ChunkPos> chunks, Set<Long> disk) {
         DistanceManager realLevels = real.getChunkSource().chunkMap.getDistanceManager();
         Map<Long, int[]> levels = new LinkedHashMap<>();
         for (ChunkPos c : chunks) {
-            int loading = realLevels.getChunkLevel(c.pack(), false);
-            int simulation = realLevels.getChunkLevel(c.pack(), true);
+            boolean fromSave = disk.contains(c.pack());
+            int loading = fromSave ? ENTITY_TICKING_LEVEL : realLevels.getChunkLevel(c.pack(), false);
+            int simulation = fromSave ? ENTITY_TICKING_LEVEL : realLevels.getChunkLevel(c.pack(), true);
             levels.put(c.pack(), new int[] {loading, simulation});
             ghost.getChunkSource().addTicket(new Ticket(GhostPath.GHOST_LOADING_TICKET, loading), c);
             if (simulation <= net.minecraft.server.level.ChunkLevel.MAX_LEVEL) {
@@ -394,13 +486,13 @@ public final class GhostCopy {
      * levels ticked), so the containers hold everything; the count is asserted (R3).
      */
     @SuppressWarnings("unchecked")
-    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what, long shift) {
+    private static <T> int copyTicks(LevelTicks<T> from, LevelTicks<T> to, BoundingBox box, String what, long shift, boolean ghostHasSavedTicks) {
         List<ScheduledTick<T>> toAdd = new ArrayList<>();
         for (Long2ObjectMap.Entry<LevelChunkTicks<T>> e : ((LevelTicksAccessor<T>) from).ghostpath$allContainers().long2ObjectEntrySet()) {
             e.getValue().getAll().filter(t -> box.isInside(t.pos())).forEach(toAdd::add);
         }
         int before = to.count();
-        if (before != 0) {
+        if (before != 0 && !ghostHasSavedTicks) { // chunks taken from the save arrive with the ticks they were saved with
             throw new IllegalStateException("ghost copy: ghost already has " + before + " " + what + " ticks");
         }
         long min = Long.MAX_VALUE;
@@ -412,7 +504,7 @@ public final class GhostCopy {
         for (ScheduledTick<T> t : toAdd) {
             to.schedule(new ScheduledTick<>(t.type(), t.pos(), t.triggerTick() + shift, t.priority(), t.subTickOrder() - min + max + 1L));
         }
-        int copied = to.count();
+        int copied = to.count() - before;
         if (copied != toAdd.size()) {
             // LevelTicks.schedule drops a tick whose chunk container is missing (LevelTicks.java:71-79); ruling R3: fail loudly
             throw new IllegalStateException("ghost copy: " + what + " ticks dropped: " + copied + " of " + toAdd.size() + " copied");

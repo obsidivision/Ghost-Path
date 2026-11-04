@@ -28,6 +28,8 @@ public final class Watched {
     int changes;
     int reruns;
     int cancelled;
+    /** Widenings in a row of the current rerun (0 for a run that started from a change). */
+    int widenRounds;
     int failures;
     int widenings;
     String status = "idle";

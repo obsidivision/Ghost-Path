@@ -84,6 +84,6 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect.
 - **Long runs**: a machine that does not go quiet (a clock) runs until the tick limit and is not watched. Raise or lower `/path limit`.
 - While a recording or a rerun is working, the world's autosave waits.
 - Only the last finished run is drawn when several machines are watched.
-- One preview needs the chunks around the machine to be loaded; far-away parts of long shots are copied from disk and take a moment.
+- **Far shots**: the machine's own chunks must be loaded. If a rerun finds that TNT or a projectile flies beyond the copied area, the mod widens the area (up to 4 times, 3 chunks each) and takes chunks that are not loaded from your **save** (without loading them in the world). Those chunks are treated as if they were loaded and ticking, so the path shows where things would go, not that the real chunk would freeze. Only what was last saved is used: no mobs or items lying there, and nothing newer than the save.
 
 If something looks wrong, check `logs/latest.log` and tell us which machine and which command.

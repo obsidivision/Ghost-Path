@@ -61,6 +61,8 @@ public final class LiveWatch {
      * edge again; the largest margin up to this that is loaded is used.
      */
     public static final int WIDEN_MARGIN = 3;
+    /** How many times in a row a rerun may widen its area (each adds WIDEN_MARGIN chunks around the footprint it just saw). */
+    public static final int MAX_WIDEN_ROUNDS = 4;
 
     private static final List<Watched> WATCHES = new ArrayList<>();
     private static long serverTick;
@@ -291,6 +293,7 @@ public final class LiveWatch {
     }
 
     private static void start(Watched w, ServerLevel level, ChunkPos[] rect, boolean widened) {
+        w.widenRounds = widened ? w.widenRounds + 1 : 0;
         try {
             run = new Rerun(w, level, rect[0], rect[1], widened);
             w.dirty = false;
@@ -316,10 +319,11 @@ public final class LiveWatch {
             return;
         }
         ServerLevel level = r.real();
-        if (!p.beyond().isEmpty() && !r.widened) {
-            // the chain reached beyond the copied chunks: copy a larger area and rerun once
+        if (!p.beyond().isEmpty() && w.widenRounds < MAX_WIDEN_ROUNDS) {
+            // the chain reached beyond the copied chunks: copy a larger area (chunks that are not loaded come from the save) and rerun;
+            // again if it still reaches beyond, up to MAX_WIDEN_ROUNDS times
             ChunkPos[] rect = GhostCheck.chooseRectangle(level, p.footprint().positions(), p.footprint().columns(), p.footprint().areas(),
-                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN);
+                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN, true);
             if (rect != null && (!rect[0].equals(r.min) || !rect[1].equals(r.max))) {
                 LOGGER.info("[ghostpath] rerun of {} reached beyond the copied chunks ({} chunks); rerunning with {}..{}", w.trigger().toShortString(),
                     p.beyond().size(), rect[0], rect[1]);

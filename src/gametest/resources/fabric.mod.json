@@ -29,7 +29,8 @@
       "obsidivision.ghostpath.test.LiveRerunRulingsTest",
       "obsidivision.ghostpath.test.FlightPreviewTest",
       "obsidivision.ghostpath.test.InspectorTest",
-      "obsidivision.ghostpath.test.DustDuperTest"
+      "obsidivision.ghostpath.test.DustDuperTest",
+      "obsidivision.ghostpath.test.GhostDiskTest"
     ]
   },
   "depends": {
