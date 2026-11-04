@@ -53,6 +53,17 @@ public final class PathRenderer {
         return 0xFF000000 | r << 16 | g << 8 | b;
     }
 
+    /** The part of a path beyond the point where the real world freezes it: the colour pulled half-way to a mid grey (and drawn dashed). */
+    static int faded(int argb) {
+        int r = ((argb >> 16 & 0xFF) + 0x70) / 2;
+        int g = ((argb >> 8 & 0xFF) + 0x70) / 2;
+        int b = ((argb & 0xFF) + 0x70) / 2;
+        return 0xFF000000 | r << 16 | g << 8 | b;
+    }
+
+    /** Colour of the dot and the label where the real world freezes a path. */
+    static final int FREEZE_COLOR = 0xFFFFB030;
+
     /** Height of the point the line goes through above the entity's feet. */
     public static double lift(FlightKind kind) {
         return switch (kind) {
@@ -105,18 +116,29 @@ public final class PathRenderer {
             }
             Tails.Job job = Tails.job(s, i);
             boolean continued = job != null && job.points() > 0;
-            segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued);
+            int freezeAt = l.freeze() == null ? n : l.freeze().point();
+            segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued, freezeAt);
             Vec3 start = at(l.xyz(), 0, up);
+            // where the real world freezes it: from there the path is what the ghost predicts for a ticking chunk
+            double endLift = 0.3;
+            if (l.freeze() != null) {
+                Vec3 fp = at(l.xyz(), freezeAt, up);
+                Gizmos.point(fp, FREEZE_COLOR, END_DOT_SIZE);
+                label("real: freezes here (" + l.freeze().kind() + ")", fp.add(0.0, 0.3, 0.0), FREEZE_COLOR);
+                if (freezeAt == n - 1) {
+                    endLift = 0.8; // the end label would sit on the freeze label
+                }
+            }
             if (l.count() > 1) {
                 label("×" + l.count(), start.add(0.0, 0.3, 0.0), color);
             }
             Vec3 end = at(l.xyz(), n - 1, up);
             if (job == null) {
-                label(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), color);
+                label(PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
             } else {
                 // the ghost run stopped here at the tick limit; the rest is the client's own continuation
                 Gizmos.point(end, color, END_DOT_SIZE);
-                label(l.end().reason() + " t+" + l.end().tick(), end.add(0.0, 0.3, 0.0), color);
+                label(PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
                 int m = job.points();
                 if (m > 0) {
                     long[] ticks = job.ticks.toLongArray();
@@ -129,7 +151,7 @@ public final class PathRenderer {
                     all[0] = l.end().tick();
                     System.arraycopy(ticks, 0, all, 1, m);
                     int light = lighter(color);
-                    segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true);
+                    segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true, m + 1);
                     Vec3 last = at(xyz, m, up);
                     String why = job.done() ? job.endReason() + " t+" + all[m] : "continuing... t+" + all[m];
                     label("continued: " + why, last.add(0.0, 0.3, 0.0), light);
@@ -155,25 +177,30 @@ public final class PathRenderer {
 
     /**
      * A polyline through the points, and dots at the ticks that match the interval; the first point (when
-     * {@code startDot}) and the last (when {@code endDot}) always get one.
+     * {@code startDot}) and the last (when {@code endDot}) always get one. From point {@code freezeAt} on (the real world freezes the
+     * entity there, a rerun's prediction over chunks that do not tick) the line is dashed (two segments on, two off) and faded.
      */
-    private static void segments(double[] xyz, int n, long[] ticks, double up, int color, int interval, int offset, int[] budget, boolean startDot, boolean endDot) {
+    private static void segments(double[] xyz, int n, long[] ticks, double up, int color, int interval, int offset, int[] budget, boolean startDot, boolean endDot, int freezeAt) {
         Vec3 prev = at(xyz, 0, up);
         if (startDot) {
             Gizmos.point(prev, color, END_DOT_SIZE);
         }
         for (int i = 1; i < n && budget[0] > 0; i++) {
             Vec3 cur = at(xyz, i, up);
+            boolean beyond = i >= freezeAt;
+            int c = beyond ? faded(color) : color;
             if (cur.distanceToSqr(prev) > 1.0E-8) {
-                Gizmos.line(prev, cur, color, LINE_WIDTH);
-                budget[0]--;
+                if (!beyond || ((i - freezeAt) / 2) % 2 == 0) {
+                    Gizmos.line(prev, cur, c, LINE_WIDTH);
+                    budget[0]--;
+                }
                 prev = cur;
             }
             boolean last = i == n - 1;
             if (last && endDot) {
-                Gizmos.point(cur, color, END_DOT_SIZE);
+                Gizmos.point(cur, c, END_DOT_SIZE);
             } else if (dotAt(ticks[i], interval, offset)) {
-                Gizmos.point(cur, color, DOT_SIZE);
+                Gizmos.point(cur, c, DOT_SIZE);
             }
         }
     }

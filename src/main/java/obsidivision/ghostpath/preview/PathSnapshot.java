@@ -29,7 +29,7 @@ public record PathSnapshot(long serial, String source, String dimension, int tic
      * an index is the entity's place in the order the chain created entities, the same in a rerun, so a pin finds it again.
      */
     public record Line(String type, FlightKind kind, int count, long startTick, long[] ticks, double[] xyz, double[] vel, double[] box, int[] fuse, int[] members,
-                       End end, @Nullable Tail tail) {
+                       End end, @Nullable Tail tail, @Nullable Freeze freeze) {
         public int points() {
             return this.ticks.length;
         }
@@ -39,6 +39,27 @@ public record PathSnapshot(long serial, String source, String dimension, int tic
             int i = java.util.Arrays.binarySearch(this.ticks, tick);
             return i >= 0 ? i : -1;
         }
+    }
+
+    /**
+     * Where the real world would stop this path: the first point (index {@code point}, tick {@code tick}, position) in a chunk whose
+     * entities do not tick in the real world. {@code kind} is "unloaded" (the chunk is not loaded, the ghost took it from the save) or
+     * "lazy" (loaded, but its entities do not tick). Only reruns have it; from that point on the path is what the ghost predicts for a
+     * world where the chunk ticked.
+     */
+    public record Freeze(int point, long tick, String kind, double x, double y, double z) {
+    }
+
+    /**
+     * The end of the path as text: "exploded t+89", or, when the real world freezes the entity earlier, both:
+     * "real: frozen at t+36; ghost: hit block at t+52".
+     */
+    public static String endText(Line l) {
+        Freeze f = l.freeze();
+        if (f == null) {
+            return l.end().reason() + " t+" + l.end().tick();
+        }
+        return "real: frozen at t+" + f.tick() + "; ghost: " + l.end().reason() + " at t+" + l.end().tick();
     }
 
     /** How a path ends: one of {@link PathBuilder#REASONS}, the tick, and where. */

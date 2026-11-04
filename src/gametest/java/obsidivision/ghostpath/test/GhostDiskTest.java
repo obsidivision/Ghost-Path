@@ -50,7 +50,7 @@ public class GhostDiskTest {
         level.setBlock(chest, Blocks.CHEST.defaultBlockState(), 2);
         ((ChestBlockEntity) level.getBlockEntity(chest)).setItem(0, new ItemStack(Items.DIAMOND, 3));
         PrimedTnt tnt = new PrimedTnt(level, b.getMinBlockX() - 3 + 0.5, y + 3.5, zc + 0.5, null);
-        tnt.setDeltaMovement(1.0, 0.0, 0.0);
+        tnt.setDeltaMovement(0.0, 0.0, 0.0); // set going after the copy: while the ghost chunks load it must not cross into B (a disk chunk's real entities are not copied)
         tnt.setNoGravity(true);
         tnt.setFuse(400);
         level.addFreshEntity(tnt);
@@ -91,6 +91,9 @@ public class GhostDiskTest {
             }
             helper.assertTrue(ghost.getBlockEntity(chest) instanceof ChestBlockEntity c && c.getItem(0).is(Items.DIAMOND) && c.getItem(0).getCount() == 3,
                 "the chest in the ghost: " + ghost.getBlockEntity(chest));
+            realTnt.setDeltaMovement(1.0, 0.0, 0.0);
+            ghost.getEntitiesOfClass(PrimedTnt.class, new AABB(a.getMinBlockX(), level.getMinY(), a.getMinBlockZ(), a.getMaxBlockX() + 1.0, level.getMaxY(), a.getMaxBlockZ() + 1.0))
+                .forEach(t -> t.setDeltaMovement(1.0, 0.0, 0.0));
             run(helper, level, ghost, realTnt, wallX, new int[] {0}, a, b);
         } catch (RuntimeException e) {
             ghost.discard();

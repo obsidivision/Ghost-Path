@@ -43,16 +43,22 @@ public final class PathBuilder {
 
     /** The real run of {@code /path machine}. */
     public static PathSnapshot of(long serial, Recording r) {
-        return build(serial, "recorded", r.dimension().identifier().toString(), r.ticks(), r.limitHit(), r.flightPoints(), r.flightNotes(), r.liveProjectiles());
+        return build(serial, "recorded", r.dimension().identifier().toString(), r.ticks(), r.limitHit(), r.flightPoints(), r.flightNotes(), r.liveProjectiles(), Map.of());
     }
 
     /** A ghost rerun. */
     public static PathSnapshot of(long serial, Prediction p, String dimension) {
-        return build(serial, "rerun", dimension, p.ticks(), p.limitHit(), p.flightPoints(), p.flightNotes(), p.liveProjectiles());
+        return build(serial, "rerun", dimension, p.ticks(), p.limitHit(), p.flightPoints(), p.flightNotes(), p.liveProjectiles(), p.notTicking());
     }
 
     public static PathSnapshot build(long serial, String source, String dimension, int ticks, boolean limitHit, List<FlightPoint> points,
                                      List<FlightNote> notes, List<LiveEntity> live) {
+        return build(serial, source, dimension, ticks, limitHit, points, notes, live, Map.of());
+    }
+
+    /** {@code notTicking}: chunk key to "unloaded" or "lazy" for the chunks the real world does not tick entities in (reruns). */
+    public static PathSnapshot build(long serial, String source, String dimension, int ticks, boolean limitHit, List<FlightPoint> points,
+                                     List<FlightNote> notes, List<LiveEntity> live, Map<Long, String> notTicking) {
         Map<Integer, List<FlightPoint>> byEntity = new LinkedHashMap<>();
         for (FlightPoint p : points) {
             if (p.kind() != FlightKind.OTHER) {
@@ -70,7 +76,7 @@ public final class PathBuilder {
         // merge identical paths: same type, start, end and every position equal
         Map<Key, PathSnapshot.Line> merged = new LinkedHashMap<>();
         for (Map.Entry<Integer, List<FlightPoint>> en : byEntity.entrySet()) {
-            PathSnapshot.Line line = line(en.getValue(), notesBy.getOrDefault(en.getKey(), List.of()), liveBy.get(en.getKey()), limitHit);
+            PathSnapshot.Line line = line(en.getValue(), notesBy.getOrDefault(en.getKey(), List.of()), liveBy.get(en.getKey()), limitHit, notTicking);
             Key key = new Key(line);
             PathSnapshot.Line old = merged.get(key);
             if (old == null) {
@@ -79,13 +85,13 @@ public final class PathBuilder {
                 int[] members = Arrays.copyOf(old.members(), old.members().length + 1);
                 members[members.length - 1] = en.getKey();
                 merged.put(key, new PathSnapshot.Line(old.type(), old.kind(), old.count() + 1, old.startTick(), old.ticks(), old.xyz(), old.vel(), old.box(), old.fuse(), members,
-                    old.end(), old.tail()));
+                    old.end(), old.tail(), old.freeze()));
             }
         }
         return new PathSnapshot(serial, source, dimension, ticks, limitHit, List.copyOf(merged.values()));
     }
 
-    private static PathSnapshot.Line line(List<FlightPoint> raw, List<FlightNote> notes, @Nullable LiveEntity live, boolean limitHit) {
+    private static PathSnapshot.Line line(List<FlightPoint> raw, List<FlightNote> notes, @Nullable LiveEntity live, boolean limitHit, Map<Long, String> notTicking) {
         // one point per tick: the last of the tick (an entity added and ticked in the same game tick has two)
         List<FlightPoint> pts = new ArrayList<>();
         for (FlightPoint p : raw) {
@@ -185,7 +191,19 @@ public final class PathBuilder {
         PathSnapshot.End end = new PathSnapshot.End(reason, last.tick(), last.x(), last.y(), last.z());
         PathSnapshot.Tail tail = reason.equals("limit") && kind == FlightKind.PROJECTILE && live != null
             ? new PathSnapshot.Tail(live.type(), live.nbt().copy(), live.tickCount(), live.xo(), live.yo(), live.zo(), live.onGround()) : null;
-        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, vel, box, fuse, new int[] {cut.getFirst().index()}, end, tail);
+        // the first point in a chunk whose entities do not tick in the real world (rerun only: the map is empty for a real recording)
+        PathSnapshot.Freeze freeze = null;
+        if (!notTicking.isEmpty()) {
+            for (int i = 0; i < cut.size(); i++) {
+                FlightPoint p = cut.get(i);
+                String why = notTicking.get(net.minecraft.world.level.ChunkPos.pack(net.minecraft.util.Mth.floor(p.x()) >> 4, net.minecraft.util.Mth.floor(p.z()) >> 4));
+                if (why != null) {
+                    freeze = new PathSnapshot.Freeze(i, p.tick(), why, p.x(), p.y(), p.z());
+                    break;
+                }
+            }
+        }
+        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, vel, box, fuse, new int[] {cut.getFirst().index()}, end, tail, freeze);
     }
 
     private static String removal(FlightKind kind, String what) {
@@ -220,7 +238,8 @@ public final class PathBuilder {
             PathSnapshot.Line a = this.line;
             PathSnapshot.Line b = k.line;
             return a.type().equals(b.type()) && a.startTick() == b.startTick() && a.end().reason().equals(b.end().reason()) && a.end().tick() == b.end().tick()
-                && Arrays.equals(a.ticks(), b.ticks()) && Arrays.equals(a.xyz(), b.xyz()) && (a.tail() != null) == (b.tail() != null);
+                && Arrays.equals(a.ticks(), b.ticks()) && Arrays.equals(a.xyz(), b.xyz()) && (a.tail() != null) == (b.tail() != null)
+                && java.util.Objects.equals(a.freeze(), b.freeze());
         }
 
         @Override

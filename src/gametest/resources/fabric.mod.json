@@ -31,7 +31,10 @@
       "obsidivision.ghostpath.test.InspectorTest",
       "obsidivision.ghostpath.test.DustDuperTest",
       "obsidivision.ghostpath.test.GhostDiskTest",
-      "obsidivision.ghostpath.test.GhostDiskTicksTest"
+      "obsidivision.ghostpath.test.GhostDiskTicksTest",
+      "obsidivision.ghostpath.test.BeyondLoadedTest",
+      "obsidivision.ghostpath.test.LiveRerunUnloadedTest",
+      "obsidivision.ghostpath.test.GhostDiskEntitiesTest"
     ]
   },
   "depends": {

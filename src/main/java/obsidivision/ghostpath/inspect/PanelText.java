@@ -26,8 +26,13 @@ public final class PanelText {
         if (fuse >= 0) {
             out.add("fuse " + fuse);
         }
+        PathSnapshot.Freeze f = line.freeze();
+        if (f != null) {
+            out.add(point >= f.point() ? "BEYOND the real ticking area (" + f.kind() + "): the real one froze at t+" + f.tick()
+                : "real: freezes at t+" + f.tick() + " (" + f.kind() + ")");
+        }
         if (point == line.points() - 1) {
-            out.add("ends: " + line.end().reason() + " t+" + line.end().tick());
+            out.add("ends: " + PathSnapshot.endText(line));
         } else if (fuse < 0) {
             out.add("in flight");
         }

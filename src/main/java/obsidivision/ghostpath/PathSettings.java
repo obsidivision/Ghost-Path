@@ -34,6 +34,12 @@ public final class PathSettings {
     /** {@code /path pins clear}: raised each time; the client clears its pins when it sees a new value. */
     public static volatile int pinsClearSerial = 0;
 
+    /**
+     * {@code /path beyond-loaded on|off}: whether a live rerun whose chain reaches beyond the loaded area may take the chunks that are
+     * not loaded from the save (default on) and so keep drawing past the loaded area. Off: only loaded chunks are copied, as before.
+     */
+    public static volatile boolean beyondLoaded = true;
+
     private PathSettings() {
     }
 }

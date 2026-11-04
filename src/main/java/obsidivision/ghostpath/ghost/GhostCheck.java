@@ -220,8 +220,8 @@ public final class GhostCheck {
 
     /**
      * With {@code disk}, a margin of {@code margin} chunks is taken whether or not those chunks are loaded (the ones that are not are
-     * copied from the save, {@code GhostCopy.prepare} with {@code allowDisk}); only the footprint's own chunks and the entity areas
-     * have to be loaded. A rerun that reaches beyond its copied area widens like this.
+     * copied from the save, {@code GhostCopy.prepare} with {@code allowDisk}); nothing has to be loaded (the footprint's own chunks
+     * too may be ones the real world has unloaded). A rerun that reaches beyond its copied area widens like this.
      */
     public static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, java.util.Collection<BlockPos> footprint,
                                                          Set<CauseTracker.Column> columns, Set<AABB> areas, int @Nullable [] mustInclude, int margin, boolean disk) {
@@ -256,8 +256,9 @@ public final class GhostCheck {
         candidates.add(grow(core, 1));
         candidates.add(core);
         for (int[] c : candidates) {
-            // a disk candidate (the first one) only has to have its core loaded: the rest comes from the save
-            if (allLoaded(real, c) || disk && c == candidates.get(0) && margin > 1 && allLoaded(real, core)) {
+            // a disk candidate (the first one) needs nothing loaded: what is not loaded comes from the save (a rerun's own footprint can lie in
+            // chunks the real world has unloaded: the chain the ghost follows past the loaded area)
+            if (allLoaded(real, c) || disk && c == candidates.get(0) && margin > 1) {
                 return new ChunkPos[] {new ChunkPos(c[0], c[1]), new ChunkPos(c[2], c[3])};
             }
         }

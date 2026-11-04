@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -51,6 +51,9 @@ public final class PathCommand {
                     .executes(ctx -> watchStop(ctx.getSource(), null))
                     .then(Commands.argument("pos", BlockPosArgument.blockPos())
                         .executes(ctx -> watchStop(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos"))))))
+            .then(Commands.literal("beyond-loaded")
+                .then(Commands.literal("on").executes(ctx -> beyondLoaded(ctx.getSource(), true)))
+                .then(Commands.literal("off").executes(ctx -> beyondLoaded(ctx.getSource(), false))))
             .then(Commands.literal("show")
                 .then(Commands.literal("on").executes(ctx -> show(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> show(ctx.getSource(), false))))
@@ -74,6 +77,13 @@ public final class PathCommand {
         PathSettings.kick = on;
         source.sendSuccess(() -> Component.literal("TNT kick " + (on ? "on" : "off")
             + (on ? "" : ": drawn and discarded, horizontal part 0 (the upward 0.2 stays)")), false);
+        return 1;
+    }
+
+    private static int beyondLoaded(CommandSourceStack source, boolean on) {
+        PathSettings.beyondLoaded = on;
+        source.sendSuccess(() -> Component.literal("Beyond the loaded area: " + (on ? "on (a rerun takes chunks that are not loaded from the save and draws past them, dashed where the real world would freeze)"
+            : "off (a rerun uses loaded chunks only)")), false);
         return 1;
     }
 

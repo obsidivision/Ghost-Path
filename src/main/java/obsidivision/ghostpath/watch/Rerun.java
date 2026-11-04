@@ -52,6 +52,7 @@ final class Rerun {
     private long copyNanos;
     private long createNanos;
     private @Nullable String triggerNote;
+    private java.util.Map<Long, String> notTicking = java.util.Map.of();
     private boolean running;
     private long maxSliceNanos;
     private final int minTicks;
@@ -75,7 +76,7 @@ final class Rerun {
             Recording rec = watch.recording();
             // a widened run (the chain reached beyond the first area) takes the chunks that are not loaded from the save
             this.prepared = GhostCopy.prepare(real, this.ghost, min, max,
-                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened, java.util.Set.of());
+                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened && obsidivision.ghostpath.PathSettings.beyondLoaded, java.util.Set.of());
         } catch (RuntimeException e) {
             this.ghost.discard();
             throw e;
@@ -105,6 +106,7 @@ final class Rerun {
                 }
                 long copyStart = System.nanoTime();
                 this.prepared.finish();
+                this.notTicking = java.util.Map.copyOf(this.prepared.realNotTicking());
                 Recording rec = this.watch.recording();
                 this.triggerNote = this.prepareTrigger(rec);
                 CauseTracker t = CauseTracker.begin(this.ghost, rec.seed(), rec.kickApplied());
@@ -208,7 +210,7 @@ final class Rerun {
             Prediction.tntSpawnTicks(t.events(), t.entityTrace()), List.copyOf(t.events()), List.copyOf(t.entityTrace()), fp, t.pending(),
             this.min, this.max, this.widened, List.copyOf(beyond), gaps, this.serverTicks, this.workNanos / 1_000_000L,
             this.copyNanos / 1_000_000L, this.maxSliceNanos / 1_000_000L, this.createNanos / 1_000_000L, this.triggerNote,
-            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles());
+            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles(), this.notTicking);
         this.finished = true;
         this.discard();
     }

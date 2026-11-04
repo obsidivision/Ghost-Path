@@ -79,22 +79,24 @@ final class TestSupport {
      * Force-loads the chunks within {@code radius} chunks of the test structure, which makes them entity ticking (forced tickets
      * are level 31). A projectile that flies out of the structure's chunk would otherwise stop being ticked in the neighbour
      * chunk (the structure sits at a different chunk offset in every run) and hold a recording open until the limit. Returns the
-     * undo: it unforces what it forced. Test setup only: a real recording never changes tickets (R9).
+     * undo: it does <b>nothing</b>, on purpose. Tests of one environment run side by side and their structures sit in the same
+     * chunks; the framework force-loads each structure's chunks itself (TestInstanceBlockEntity.java:341) and unforces every forced
+     * chunk when the batch ends (GameTestRunner.java:116). "I forced it, I unforce it" released chunks a neighbour test still needed:
+     * its arrow stopped being ticked and held the recording to the tick limit (1 in 15 runs of the flight tests, only 42 of 1999 ticks
+     * logged), and a release of a chunk that the framework had forced for a test not yet started hung that test for good (a test whose
+     * structure chunks are not entity ticking does not count ticks, so it never times out, GameTestInfo.java:103). Test setup only: a
+     * real recording never changes tickets (R9).
      */
     static Runnable forceAround(GameTestHelper helper, int radius) {
         ServerLevel level = helper.getLevel();
         BlockPos centre = helper.absolutePos(new BlockPos(0, 0, 0));
         int cx = centre.getX() >> 4;
         int cz = centre.getZ() >> 4;
-        List<long[]> forced = new ArrayList<>();
         for (int dx = -radius; dx <= radius; dx++) {
             for (int dz = -radius; dz <= radius; dz++) {
-                if (!level.getForceLoadedChunks().contains(ChunkPos.pack(cx + dx, cz + dz))) {
-                    level.setChunkForced(cx + dx, cz + dz, true);
-                    forced.add(new long[] {cx + dx, cz + dz});
-                }
+                level.setChunkForced(cx + dx, cz + dz, true);
             }
         }
-        return () -> forced.forEach(c -> level.setChunkForced((int) c[0], (int) c[1], false));
+        return () -> { };
     }
 }

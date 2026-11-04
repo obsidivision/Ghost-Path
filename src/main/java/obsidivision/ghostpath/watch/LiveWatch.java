@@ -323,7 +323,7 @@ public final class LiveWatch {
             // the chain reached beyond the copied chunks: copy a larger area (chunks that are not loaded come from the save) and rerun;
             // again if it still reaches beyond, up to MAX_WIDEN_ROUNDS times
             ChunkPos[] rect = GhostCheck.chooseRectangle(level, p.footprint().positions(), p.footprint().columns(), p.footprint().areas(),
-                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN, true);
+                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN, PathSettings.beyondLoaded);
             if (rect != null && (!rect[0].equals(r.min) || !rect[1].equals(r.max))) {
                 LOGGER.info("[ghostpath] rerun of {} reached beyond the copied chunks ({} chunks); rerunning with {}..{}", w.trigger().toShortString(),
                     p.beyond().size(), rect[0], rect[1]);
@@ -363,7 +363,17 @@ public final class LiveWatch {
         w.lastRect = new int[] {p.copiedMin().x(), p.copiedMin().z(), p.copiedMax().x(), p.copiedMax().z()};
         w.reruns++;
         // step 5: the flight preview shows this prediction (built from copies, the ghost is gone: Rerun.finish discarded it)
-        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString()));
+        obsidivision.ghostpath.preview.PathSnapshot snap = obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString()));
+        // paths the real world would freeze (the ghost took their chunks from the save, or they are loaded but not ticking)
+        List<obsidivision.ghostpath.preview.PathSnapshot.Line> frozen = snap.lines().stream().filter(l -> l.freeze() != null).toList();
+        if (!frozen.isEmpty()) {
+            line.append(" | ").append(frozen.stream().mapToInt(obsidivision.ghostpath.preview.PathSnapshot.Line::count).sum()).append(" path(s) leave the area where entities tick: ");
+            line.append(frozen.stream().limit(3).map(l -> l.type().replace("minecraft:", "") + (l.count() > 1 ? " x" + l.count() : "") + " " + obsidivision.ghostpath.preview.PathSnapshot.endText(l)
+                + " [" + l.freeze().kind() + "]").collect(java.util.stream.Collectors.joining("; ")));
+            if (frozen.size() > 3) {
+                line.append("; +").append(frozen.size() - 3).append(" more");
+            }
+        }
         w.status = w.dirty ? "changed again, waiting for quiet" : "idle";
         w.chat.accept(line.toString());
     }
