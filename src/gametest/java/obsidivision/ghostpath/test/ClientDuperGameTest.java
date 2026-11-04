@@ -54,7 +54,7 @@ public class ClientDuperGameTest implements FabricClientGameTest {
                         }
                     }
                 }
-                at[0] = new BlockPos(x, y + 1, z);
+                at[0] = new BlockPos(x, y + 41, z); // 40 blocks above the floor: the TNT fall and fly like in the game tests
                 for (int dy = -40; dy <= 6; dy++) { // the compression column; the TNT fly east into it
                     level.setBlock(at[0].offset(24, dy, 1), Blocks.STONE.defaultBlockState(), 2 | 16);
                 }
@@ -71,6 +71,12 @@ public class ClientDuperGameTest implements FabricClientGameTest {
             // 14 blocks south-east of the middle of the machine, a little above, looking at it
             server.runCommand("tp @a " + (origin.getX() + 7.5) + " " + (origin.getY() + 6) + " " + (origin.getZ() + 16) + " 180 20");
             context.waitTicks(300); // the saved mid-cycle state settles (DustDuperTest.SETTLE_TICKS)
+            // wide view: the machine, the column 24 blocks east and the 40 blocks the TNT fall
+            double cx = origin.getX() + 12.5;
+            String wide = "tp @a " + cx + " " + (origin.getY() + 12) + " " + (origin.getZ() + 50) + " 180 24";
+            server.runCommand(wide);
+            context.waitTicks(30);
+            docs(ClientShots.capture(context, "duper-1-idle"), "duper-1-idle.png");
             server.runCommand("path limit " + PathSettings.DEFAULT_TICK_LIMIT);
             long t0 = System.nanoTime();
             server.runCommand("path machine " + lever.getX() + " " + lever.getY() + " " + lever.getZ());
@@ -100,6 +106,25 @@ public class ClientDuperGameTest implements FabricClientGameTest {
             LOG.info("[ghostpath] client duper: {} lines, {} segments drawn per frame; frame rate {} fps with the paths hidden, {} fps shown (software OpenGL); drawing the paths takes {} ms per frame on the client thread",
                 PathRenderer.lastLines, PathRenderer.lastSegments, String.format("%.1f", hiddenFps), String.format("%.1f", shownFps), String.format("%.3f", msPerFrame));
             ClientShots.capture(context, "duper-paths");
+            docs(ClientShots.capture(context, "duper-2-recorded"), "duper-2-recorded.png");
+            // close view of the machine itself with the paths
+            server.runCommand("tp @a " + (origin.getX() + 9.0) + " " + (origin.getY() + 7) + " " + (origin.getZ() + 14) + " 180 25");
+            context.waitTicks(30);
+            docs(ClientShots.capture(context, "duper-3-machine"), "duper-3-machine.png");
+            // hover the stack: the camera 6 blocks south of the compressed TNT at t+40, looking north
+            PathSnapshot snap2 = PathStore.latest();
+            PathSnapshot.Line tnt = snap2.lines().stream().filter(l -> l.type().equals("minecraft:tnt") && l.indexOfTick(40) >= 0).findFirst().orElse(null);
+            if (tnt != null) {
+                int k = tnt.indexOfTick(40);
+                double hx = tnt.xyz()[3 * k];
+                double hy = tnt.xyz()[3 * k + 1] + PathRenderer.lift(tnt.kind());
+                double hz = tnt.xyz()[3 * k + 2];
+                server.runCommand("tp @a " + hx + " " + (hy - 1.62 + 0.3) + " " + (hz + 7.0) + " 180 0");
+                context.waitTicks(30);
+                docs(ClientShots.capture(context, "duper-4-hover-stack"), "duper-4-hover-stack.png");
+            }
+            server.runCommand(wide);
+            context.waitTicks(20);
 
             // a live rerun in the real game: a piston next to an observer
             PathSnapshot before = PathStore.latest();
@@ -116,7 +141,19 @@ public class ClientDuperGameTest implements FabricClientGameTest {
             LOG.info("[ghostpath] client duper: rerun after the piston: {} ms from the block change to the new paths (10 quiet ticks = 500 ms of that); prediction {} ticks, {} server ticks, run {} ms, ghost created in {} ms, copy {} ms, longest slice {} ms",
                 rerunMs, p[0].ticks(), p[0].serverTicks(), p[0].millis(), p[0].createMillis(), p[0].copyMillis(), p[0].maxSliceMillis());
             context.waitTicks(20);
-            ClientShots.capture(context, "duper-paths-rerun");
+            docs(ClientShots.capture(context, "duper-5-after-piston"), "duper-5-after-piston.png");
+        }
+    }
+
+    /** Copies a capture into docs/img of the repository (the client run directory is build/run/clientGameTest). */
+    private static void docs(java.nio.file.Path shot, String name) {
+        try {
+            java.nio.file.Path dir = java.nio.file.Path.of("../../../docs/img").toAbsolutePath().normalize();
+            if (java.nio.file.Files.isDirectory(dir)) {
+                java.nio.file.Files.copy(shot, dir.resolve(name), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
         }
     }
 }
