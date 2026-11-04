@@ -153,6 +153,14 @@ public final class UndoLog {
     private int entitiesNotRestored;
     /** Positions whose block state or block entity was changed by work outside the chain (CauseTracker context off). */
     private final Set<BlockPos> nonChainWrites = new LinkedHashSet<>();
+    /**
+     * Shared positions (non-chain work wrote there first): the state just before the chain's first write, captured at the
+     * chain's last access before that write (a block write, or a block entity handed out / about to tick / about to
+     * change its contents), so it is from after every earlier non-chain write. Frozen once the chain writes.
+     */
+    private final Map<BlockPos, BlockSnapshot> beforeChain = new LinkedHashMap<>();
+    /** Positions the chain has written (block state or chain {@code setChanged}): {@link #beforeChain} is frozen there. */
+    private final Set<BlockPos> chainWrote = new HashSet<>();
     private int sharedRestored;
     private int nonChainBlocksLeft;
     private int nonChainEntitiesLeft;
@@ -306,17 +314,53 @@ public final class UndoLog {
         if (this.busy || chunk.getLevel() != this.level) {
             return;
         }
-        CauseTracker tracker = CauseTracker.active();
-        if (!(tracker != null && tracker.inChain(this.level)) && chunk.getBlockState(pos) != newState) {
-            this.nonChainWrites.add(pos.immutable());
+        boolean change = chunk.getBlockState(pos) != newState;
+        if (this.inChain()) {
+            this.chainTouch(pos, change);
+        } else if (change) {
+            this.nonChainWrite(pos);
         }
         this.captureBlock(pos);
+    }
+
+    private boolean inChain() {
+        CauseTracker tracker = CauseTracker.active();
+        return tracker != null && tracker.inChain(this.level);
+    }
+
+    /** Non-chain work changed {@code pos}: an earlier before-chain capture is stale (unless the chain already wrote). */
+    private void nonChainWrite(BlockPos pos) {
+        BlockPos key = pos.immutable();
+        this.nonChainWrites.add(key);
+        if (!this.chainWrote.contains(key)) {
+            this.beforeChain.remove(key);
+        }
+    }
+
+    /**
+     * Chain work is about to read or write {@code pos} (or, for a late {@code setChanged}, just did). If non-chain work
+     * wrote there and the chain has not written yet, capture the state now; {@code write} freezes it.
+     */
+    private void chainTouch(BlockPos pos, boolean write) {
+        BlockPos key = pos.immutable();
+        if (this.chainWrote.contains(key)) {
+            return;
+        }
+        if (this.nonChainWrites.contains(key) && !this.beforeChain.containsKey(key)) {
+            this.beforeChain.put(key, this.snapshotNow(key));
+        }
+        if (write) {
+            this.chainWrote.add(key);
+        }
     }
 
     /** A block entity was handed out or is about to tick. This is its first access if the position is not logged yet. */
     public void onBlockEntityAccess(BlockEntity blockEntity) {
         if (this.busy || blockEntity.getLevel() != this.level) {
             return;
+        }
+        if (this.inChain()) {
+            this.chainTouch(blockEntity.getBlockPos(), false);
         }
         this.captureBlock(blockEntity.getBlockPos());
     }
@@ -333,9 +377,14 @@ public final class UndoLog {
         if (this.busy || blockEntity.getLevel() != this.level) {
             return;
         }
-        CauseTracker tracker = CauseTracker.active();
-        if (!(tracker != null && tracker.inChain(this.level))) {
-            this.nonChainWrites.add(blockEntity.getBlockPos().immutable());
+        if (this.inChain()) {
+            BlockPos pos = blockEntity.getBlockPos();
+            if (this.nonChainWrites.contains(pos) && !this.chainWrote.contains(pos) && !this.beforeChain.containsKey(pos)) {
+                LOGGER.warn("[ghostpath] undo log: chain changed block entity at {} after a non-chain change with no access hook first; its pre-chain state is the changed one", pos);
+            }
+            this.chainTouch(pos, true);
+        } else {
+            this.nonChainWrite(blockEntity.getBlockPos());
         }
         if (this.blocks.containsKey(blockEntity.getBlockPos())) {
             return;
@@ -405,14 +454,19 @@ public final class UndoLog {
             return;
         }
         BlockPos key = pos.immutable();
+        this.blocks.put(key, this.snapshotNow(key));
+    }
+
+    private BlockSnapshot snapshotNow(BlockPos key) {
+        boolean wasBusy = this.busy;
         this.busy = true;
         try {
             BlockState state = this.level.getBlockState(key);
             BlockEntity be = this.level.getChunkAt(key).getBlockEntity(key, LevelChunk.EntityCreationType.CHECK);
             CompoundTag tag = be == null ? null : be.saveWithFullMetadata(this.level.registryAccess());
-            this.blocks.put(key, new BlockSnapshot(state, tag));
+            return new BlockSnapshot(state, tag);
         } finally {
-            this.busy = false;
+            this.busy = wasBusy;
         }
     }
 
@@ -514,10 +568,12 @@ public final class UndoLog {
                 }
                 continue;
             }
-            if (this.nonChainWrites.contains(pos)) {
-                this.sharedRestored++;
-            }
             BlockSnapshot snap = entry.getValue();
+            if (this.nonChainWrites.contains(pos)) {
+                // shared: back to the state just before the chain's first write, not the state at begin (ruling)
+                this.sharedRestored++;
+                snap = this.beforeChain.getOrDefault(pos, snap);
+            }
             if (this.level.getBlockState(pos) != snap.state()) {
                 this.level.setBlock(pos, snap.state(), RESTORE_FLAGS);
             }
