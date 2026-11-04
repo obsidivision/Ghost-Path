@@ -18,12 +18,15 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockEventData;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.ticks.ScheduledTick;
 import org.jspecify.annotations.Nullable;
@@ -62,11 +65,22 @@ public final class CauseTracker {
     }
 
     public static CauseTracker begin(ServerLevel level, long seed) {
+        return begin(level, seed, true);
+    }
+
+    /** {@code kick}: whether the TNT kick is applied during chain work (off: drawn, discarded, horizontal part 0). */
+    public static CauseTracker begin(ServerLevel level, long seed, boolean kick) {
         if (active != null) {
             throw new IllegalStateException("cause tracking is already active");
         }
-        active = new CauseTracker(level, seed);
+        active = new CauseTracker(level, seed, kick);
         return active;
+    }
+
+    /** False while chain work in {@code level} builds a TNT and the kick is switched off ({@code /path kick off}). */
+    public static boolean kickApplied(Level level) {
+        CauseTracker t = active;
+        return t == null || !t.inChain(level) || t.kick;
     }
 
     /** Runs {@code body} with chain context on if {@code chain}; nests correctly. */
@@ -93,12 +107,16 @@ public final class CauseTracker {
     private final Thread thread;
     private final long startTime;
     private final RandomSource chainRandom;
+    private final boolean kick;
     private int depth;
+    private int entitiesConstructed;
 
     private final List<ChainEvent> events = new ArrayList<>();
     private final Set<BlockPos> writes = new LinkedHashSet<>();
     private final Map<BlockPos, EnumSet<ReadKind>> reads = new HashMap<>();
     private final Set<String> noCollisionSeen = new HashSet<>();
+    private final Set<AABB> entityAreas = new LinkedHashSet<>();
+    private final Set<Column> heightmapColumns = new LinkedHashSet<>();
     private final Map<String, Integer> unseededSites = new LinkedHashMap<>();
     // identity, not equality: a queued tick or block event that is removed without running must never let a later,
     // equal-looking one count as chain work (ScheduledTick/BlockEventData are records with value equality)
@@ -106,8 +124,13 @@ public final class CauseTracker {
     private final Set<BlockEventData> chainBlockEvents = Collections.newSetFromMap(new IdentityHashMap<>());
     private final Map<Entity, Integer> chainEntities = new IdentityHashMap<>();
     private final Set<BlockEntity> chainBlockEntities = Collections.newSetFromMap(new IdentityHashMap<>());
+    private final Set<Entity> addedChainEntities = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
+    private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
+    private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
 
-    private CauseTracker(ServerLevel level, long seed) {
+    private CauseTracker(ServerLevel level, long seed, boolean kick) {
+        this.kick = kick;
         this.level = level;
         this.thread = Thread.currentThread();
         this.startTime = level.getGameTime();
@@ -149,8 +172,13 @@ public final class CauseTracker {
         /** {@code Level.getBlockEntity} */
         BLOCK_ENTITY,
         /** entity block collision, read from the chunk by {@code BlockCollisions} (bypasses Level.getBlockState) */
-        COLLISION
+        COLLISION,
+        /** light level, through {@code BlockAndLightGetter.getBrightness / getRawBrightness} (also {@code canSeeSky}) */
+        LIGHT
     }
+
+    /** A heightmap read: the column (x, z), whatever the height type. */
+    public record Column(int x, int z) {}
 
     /** Block positions read by chain work, with how they were read. */
     public Map<BlockPos, Set<ReadKind>> reads() {
@@ -162,6 +190,69 @@ public final class CauseTracker {
         Set<BlockPos> all = new LinkedHashSet<>(this.writes);
         all.addAll(this.reads.keySet());
         return all;
+    }
+
+    /**
+     * Boxes that chain work queried for entities ({@code Level.getEntities}, {@code hasEntities}): TNT knockback,
+     * hoppers picking up items, pressure plates and detector rails, and the collision queries of every moving chain
+     * entity. A real entity entering or leaving such a box can change the run. Each distinct box once.
+     */
+    public Set<AABB> entityAreas() {
+        return Collections.unmodifiableSet(this.entityAreas);
+    }
+
+    /** Chain entities of type {@code type} that were really added to the level. */
+    public int addedChainEntities(EntityType<?> type) {
+        int n = 0;
+        for (Entity e : this.addedChainEntities) {
+            if (e.getType() == type) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /** What is still going on, for the recorder's "is the chain finished?" check. */
+    public record Pending(int ticks, int blockEvents, int entities, int movingPistons) {
+        public boolean any() {
+            return this.ticks + this.blockEvents + this.entities + this.movingPistons > 0;
+        }
+
+        @Override
+        public String toString() {
+            return this.ticks + " ticks, " + this.blockEvents + " block events, " + this.entities + " entities, " + this.movingPistons + " moving pistons";
+        }
+    }
+
+    /**
+     * Pending chain work: scheduled ticks and block events queued by the chain and not yet run or removed; chain
+     * entities still in the level (an item that has lain still on the ground for two ticks is settled: items stay for
+     * 6000 ticks and would otherwise keep every recording running); chain moving-piston block entities still moving.
+     * Other chain block entities (hoppers on cooldown, ...) are not counted: not covered.
+     */
+    public Pending pending() {
+        int entities = 0;
+        for (Entity e : this.chainEntities.keySet()) {
+            if (e.isRemoved() || this.level.getEntity(e.getId()) != e) {
+                continue; // gone, or tagged in its constructor and never added
+            }
+            if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= 2) {
+                continue;
+            }
+            entities++;
+        }
+        int pistons = 0;
+        for (BlockEntity be : this.chainBlockEntities) {
+            if (be instanceof PistonMovingBlockEntity && !be.isRemoved()) {
+                pistons++;
+            }
+        }
+        return new Pending(this.chainTicks.size(), this.chainBlockEvents.size(), entities, pistons);
+    }
+
+    /** Columns whose heightmap chain work read (a real block change in the column can change the height). */
+    public Set<Column> heightmapColumns() {
+        return Collections.unmodifiableSet(this.heightmapColumns);
     }
 
     /** Call site -> number of unseeded chain draws there. */
@@ -206,6 +297,20 @@ public final class CauseTracker {
             this.reads.put(pos.immutable(), kinds);
         }
         kinds.add(kind);
+    }
+
+    /** Chain work read a heightmap of {@code level} at column (x, z). */
+    public void onHeightmapRead(Level level, int x, int z) {
+        if (this.inChain(level)) {
+            this.heightmapColumns.add(new Column(x, z));
+        }
+    }
+
+    /** Chain work asked {@code level} for entities inside {@code box}. Footprint only, not an event. */
+    public void onEntityArea(Level level, AABB box) {
+        if (this.inChain(level)) {
+            this.entityAreas.add(box);
+        }
     }
 
     /**
@@ -345,6 +450,13 @@ public final class CauseTracker {
         this.log(ChainEvent.Kind.ENTITY_TAGGED, null, "#" + index + " " + EntityType.getKey(entity.getType()) + " " + why);
     }
 
+    /** After {@code ServerLevel.addEntity} accepted {@code entity} (the call that tags it comes first). */
+    public void onEntityAdded(Entity entity) {
+        if (this.chainEntities.containsKey(entity)) {
+            this.addedChainEntities.add(entity);
+        }
+    }
+
     public boolean isChainEntity(Entity entity) {
         return this.chainEntities.containsKey(entity);
     }
@@ -357,6 +469,10 @@ public final class CauseTracker {
         }
         Vec3 p = entity.position();
         Vec3 v = entity.getDeltaMovement();
+        if (entity instanceof ItemEntity) {
+            Vec3 last = this.lastItemPos.put(entity, p);
+            this.itemRestTicks.put(entity, p.equals(last) ? this.itemRestTicks.getOrDefault(entity, 0) + 1 : 0);
+        }
         this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType())
             + " pos=(" + p.x + ", " + p.y + ", " + p.z + ") v=(" + v.x + ", " + v.y + ", " + v.z + ")"
             + (entity.isRemoved() ? " removed" : ""));
@@ -373,6 +489,19 @@ public final class CauseTracker {
             LOGGER.warn("[ghostpath] unseeded draw by chain work, not on the allowlist: {}", display);
         }
         this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason == null ? " WARNING: not allowed" : " allowed: " + reason));
+    }
+
+    /**
+     * The id for an entity built by chain work: the first of the level's next ids whose residue mod 4 is this entity's
+     * construction index mod 4 (see EntityRandomMixin). {@code first} is the id the level just handed out.
+     */
+    public int chainEntityId(Level level, int first) {
+        int wanted = this.entitiesConstructed++ & 3;
+        int id = first;
+        for (int i = 0; i < 8 && (id & 3) != wanted; i++) {
+            id = level.getNextEntityId();
+        }
+        return id;
     }
 
     /** Seed for the own random of an entity built by chain work: one draw from the chain stream. */

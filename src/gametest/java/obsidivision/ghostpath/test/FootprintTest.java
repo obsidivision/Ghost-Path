@@ -5,7 +5,11 @@ import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.level.entity.EntityTypeTest;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.Vec3;
@@ -137,5 +141,36 @@ public class FootprintTest {
                 helper.succeed();
             });
         });
+    }
+
+    /**
+     * Entity areas of the footprint (ruling after 1c): chain work that asks for entities in a box puts the box in the
+     * footprint, through each of the three Level methods every entity lookup ends in; a lookup outside chain work does not.
+     */
+    @GameTest(maxTicks = 100, environment = "ghostpath-gametest:footprint_areas")
+    public void entityAreasInFootprint(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos origin = helper.absolutePos(new BlockPos(2, 2, 2));
+        AABB except = new AABB(origin).inflate(1.5);
+        AABB typed = new AABB(origin).inflate(2.5);
+        AABB has = new AABB(origin).inflate(3.5);
+        AABB outside = new AABB(origin).inflate(4.5);
+        CauseTracker tracker = CauseTracker.begin(level, 1L);
+        try {
+            tracker.runAsChain(() -> {
+                level.getEntities((Entity) null, except);                                  // EntityGetter default -> Level (except, bb, selector)
+                level.getEntitiesOfClass(ItemEntity.class, typed);                        // -> Level (type, bb, selector, output, max)
+                level.hasEntities(EntityTypeTest.forClass(Entity.class), has, e -> true);  // Level.hasEntities
+            });
+            level.getEntities((Entity) null, outside);                                     // not chain work
+        } finally {
+            tracker.end();
+        }
+        LOG.info("[ghostpath] entity areas: {}", tracker.entityAreas());
+        helper.assertTrue(tracker.entityAreas().contains(except), "getEntities(except, bb) area missing: " + tracker.entityAreas());
+        helper.assertTrue(tracker.entityAreas().contains(typed), "getEntitiesOfClass area missing: " + tracker.entityAreas());
+        helper.assertTrue(tracker.entityAreas().contains(has), "hasEntities area missing: " + tracker.entityAreas());
+        helper.assertTrue(!tracker.entityAreas().contains(outside), "an entity lookup outside chain work was recorded");
+        helper.succeed();
     }
 }

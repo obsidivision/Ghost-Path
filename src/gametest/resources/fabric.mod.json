@@ -10,7 +10,10 @@
       "obsidivision.ghostpath.test.UndoLogTest",
       "obsidivision.ghostpath.test.CauseTrackingTest",
       "obsidivision.ghostpath.test.UndoGapsTest",
-      "obsidivision.ghostpath.test.FootprintTest"
+      "obsidivision.ghostpath.test.FootprintTest",
+      "obsidivision.ghostpath.test.HurtCoverageTest",
+      "obsidivision.ghostpath.test.FootprintVariationTest",
+      "obsidivision.ghostpath.test.MachineCommandTest"
     ]
   },
   "depends": {

@@ -39,6 +39,7 @@ public abstract class ServerLevelMixin {
         CauseTracker tracker = CauseTracker.active();
         if (tracker != null && cir.getReturnValueZ()) {
             tracker.onEntityTouched(entity, "spawned");
+            tracker.onEntityAdded(entity);
         }
     }
 

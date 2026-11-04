@@ -9,9 +9,11 @@ import net.minecraft.core.Direction;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.ObserverBlock;
 import net.minecraft.world.level.block.RepeaterBlock;
 import net.minecraft.world.level.block.piston.PistonBaseBlock;
+import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.ChainEvent;
@@ -43,9 +45,14 @@ public class CauseTrackingTest {
      * TNT can land in a chunk that is not entity-ticking (it then never ticks; seen once, depends on where the test is
      * placed). Force-load every chunk the machine and blast can reach for the test's duration.
      */
-    private static void forceChunks(GameTestHelper helper, boolean forced) {
-        BlockPos min = helper.absolutePos(new BlockPos(-8, 0, -8));
-        BlockPos max = helper.absolutePos(new BlockPos(22, 0, 14));
+    static void forceChunks(GameTestHelper helper, boolean forced) {
+        forceChunks(helper, forced, BlockPos.ZERO);
+    }
+
+    /** Same, for the machine built at {@code off} (relative to the test structure). */
+    static void forceChunks(GameTestHelper helper, boolean forced, BlockPos off) {
+        BlockPos min = helper.absolutePos(new BlockPos(-8, 0, -8).offset(off));
+        BlockPos max = helper.absolutePos(new BlockPos(22, 0, 14).offset(off));
         for (int cx = Math.min(min.getX(), max.getX()) >> 4; cx <= Math.max(min.getX(), max.getX()) >> 4; cx++) {
             for (int cz = Math.min(min.getZ(), max.getZ()) >> 4; cz <= Math.max(min.getZ(), max.getZ()) >> 4; cz++) {
                 helper.getLevel().setChunkForced(cx, cz, forced);
@@ -58,42 +65,66 @@ public class CauseTrackingTest {
      * chunk and entity-section loading, which takes real time, while game tests tick at full speed (no 50 ms sleep): the
      * wait can be thousands of ticks, hence the large maxTicks (seen: >800 once).
      */
-    private static void whenEntityTicking(GameTestHelper helper, Runnable then) {
-        whenEntityTicking(helper, then, 0);
+    static void whenEntityTicking(GameTestHelper helper, Runnable then) {
+        whenEntityTicking(helper, BlockPos.ZERO, then, 0);
     }
 
-    private static void whenEntityTicking(GameTestHelper helper, Runnable then, int waited) {
+    static void whenEntityTicking(GameTestHelper helper, BlockPos off, Runnable then) {
+        whenEntityTicking(helper, off, then, 0);
+    }
+
+    private static void whenEntityTicking(GameTestHelper helper, BlockPos off, Runnable then, int waited) {
         boolean ready = true;
         for (BlockPos rel : List.of(new BlockPos(0, 2, 0), new BlockPos(14, 2, 0), new BlockPos(0, 2, 6), new BlockPos(14, 2, 6), TNT)) {
-            ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(rel));
+            ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(rel.offset(off)));
         }
         if (ready) {
             LOG.info("[ghostpath] machine area entity-ticking after {} ticks", waited);
             then.run();
         } else {
-            helper.runAfterDelay(1, () -> whenEntityTicking(helper, then, waited + 1));
+            helper.runAfterDelay(1, () -> whenEntityTicking(helper, off, then, waited + 1));
         }
     }
 
-    private static void buildMachine(GameTestHelper helper) {
+    static void buildMachine(GameTestHelper helper) {
+        buildMachine(helper, BlockPos.ZERO, false);
+    }
+
+    /**
+     * The machine with its west end at {@code off}. {@code lever}: a lever on the floor at the trigger position, for
+     * {@code /path machine}; else the trigger spot is empty and {@link #runMachine} places a redstone block there.
+     */
+    static void buildMachine(GameTestHelper helper, BlockPos off, boolean lever) {
         TestSupport.removeBarriers(helper);
-        forceChunks(helper, true);
+        forceChunks(helper, true, off);
         for (int x = 0; x <= 14; x++) {
             for (int z = 0; z <= 6; z++) {
-                helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
+                helper.setBlock(new BlockPos(x, 1, z).offset(off), Blocks.STONE);
             }
         }
         for (int x = 1; x <= 6; x++) {
             // DiodeBlock.getInputSignal (DiodeBlock.java:113-116) reads from pos.relative(FACING): input from the west
-            helper.setBlock(new BlockPos(x, 2, 1), Blocks.REPEATER.defaultBlockState().setValue(RepeaterBlock.FACING, Direction.WEST));
+            helper.setBlock(new BlockPos(x, 2, 1).offset(off), Blocks.REPEATER.defaultBlockState().setValue(RepeaterBlock.FACING, Direction.WEST));
         }
-        helper.setBlock(PISTON, Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
-        helper.setBlock(PUSHED, Blocks.REDSTONE_BLOCK); // in front of the piston, so it does not power it
-        helper.setBlock(TNT, Blocks.TNT);
+        helper.setBlock(PISTON.offset(off), Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
+        helper.setBlock(PUSHED.offset(off), Blocks.REDSTONE_BLOCK); // in front of the piston, so it does not power it
+        helper.setBlock(TNT.offset(off), Blocks.TNT);
+        if (lever) {
+            // a floor lever powers the repeater next to it directly (LeverBlock.getSignal, :133-143)
+            helper.setBlock(TRIGGER.offset(off), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR));
+        }
     }
 
-    private static void runMachine(GameTestHelper helper, CauseTracker tracker) {
-        tracker.runAsChain(() -> helper.setBlock(TRIGGER, Blocks.REDSTONE_BLOCK));
+    static BlockPos trigger() {
+        return TRIGGER;
+    }
+
+    static void runMachine(GameTestHelper helper, CauseTracker tracker) {
+        runMachine(helper, tracker, BlockPos.ZERO);
+    }
+
+    static void runMachine(GameTestHelper helper, CauseTracker tracker, BlockPos off) {
+        tracker.runAsChain(() -> helper.setBlock(TRIGGER.offset(off), Blocks.REDSTONE_BLOCK));
     }
 
     // ------------------------------------------------------------------------------------------------------------
@@ -217,11 +248,22 @@ public class CauseTrackingTest {
         });
     }
 
-    /** Every event must match between two seeded runs, and so must the footprint (each position with how it was read). */
-    private static List<String> comparable(CauseTracker tracker) {
+    /**
+     * How {@code p} was read, light reads left out. While it rains, chain entities read light (Entity.isInRain ->
+     * Level.precipitationAt -> canSeeSky) and which positions get a light read differed between two otherwise identical
+     * runs: skylight is updated by the asynchronous light thread after the restore (found by MachineCommandTest; DESIGN 1d).
+     */
+    private static java.util.Set<CauseTracker.ReadKind> readsWithoutLight(CauseTracker tracker, BlockPos p) {
+        java.util.Set<CauseTracker.ReadKind> kinds = new java.util.TreeSet<>(tracker.reads().getOrDefault(p, java.util.Set.of()));
+        kinds.remove(CauseTracker.ReadKind.LIGHT);
+        return kinds;
+    }
+
+    /** Every event must match between two seeded runs, and so must the footprint (each position with how it was read, light aside). */
+    static List<String> comparable(CauseTracker tracker) {
         List<String> out = new ArrayList<>(tracker.events().stream().map(ChainEvent::toString).toList());
         tracker.footprint().stream().sorted()
-            .map(p -> "FOOTPRINT " + p.toShortString() + (tracker.writes().contains(p) ? " written" : "") + " read=" + tracker.reads().getOrDefault(p, java.util.Set.of()))
+            .map(p -> "FOOTPRINT " + p.toShortString() + (tracker.writes().contains(p) ? " written" : "") + " read=" + readsWithoutLight(tracker, p))
             .forEach(out::add);
         return out;
     }
@@ -280,7 +322,7 @@ public class CauseTrackingTest {
         });
     }
 
-    private static void report(String name, CauseTracker tracker) {
+    static void report(String name, CauseTracker tracker) {
         LOG.info("[ghostpath] {}: {} chain events, {} written positions, {} read positions", name, tracker.events().size(), tracker.writes().size(), tracker.reads().size());
         LOG.info("[ghostpath] {} events:\n{}", name, tracker.eventsAsText(400));
         for (Map.Entry<String, Integer> site : tracker.unseededDrawSites().entrySet()) {

@@ -3,6 +3,7 @@
   "package": "obsidivision.ghostpath.mixin",
   "compatibilityLevel": "JAVA_25",
   "mixins": [
+    "BlockAndLightGetterMixin",
     "BlockCollisionsMixin",
     "BlockDropMixin",
     "BlockEntityMixin",
@@ -17,6 +18,7 @@
     "EntityRandomMixin",
     "LevelChunkMixin",
     "LevelChunkTicksMixin",
+    "LevelEntityAreaMixin",
     "LevelMixin",
     "LevelReadMixin",
     "LevelTicksAccessor",

@@ -14,11 +14,13 @@ import net.minecraft.world.level.BlockEventData;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.ChestBlockEntity;
+import net.minecraft.world.level.block.entity.CommandBlockEntity;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.ticks.LevelChunkTicks;
 import net.minecraft.world.ticks.ScheduledTick;
 import obsidivision.ghostpath.mixin.ServerLevelAccessor;
+import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.UndoLog;
 
 /**
@@ -121,5 +123,51 @@ public class UndoGapsTest {
                 helper.succeed();
             });
         });
+    }
+
+    /**
+     * Ruling after R4: a block entity that is not a container is snapshotted at the chain's first read of it
+     * ({@code Level.getBlockEntity}), which comes before any change, so the restore is exact and it is not "late". A block
+     * entity the chain changes without ever reading it (an old reference) stays reported as late.
+     * A command block holds a command string in its block entity data and is no container.
+     */
+    @GameTest(maxTicks = 100, environment = "ghostpath-gametest:be_first_read")
+    public void nonContainerBlockEntitySnapshotAtFirstRead(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        BlockPos readRel = new BlockPos(1, 2, 1);
+        BlockPos oldRefRel = new BlockPos(3, 2, 1);
+        helper.setBlock(readRel, Blocks.COMMAND_BLOCK);
+        helper.setBlock(oldRefRel, Blocks.COMMAND_BLOCK);
+        CommandBlockEntity read = helper.getBlockEntity(readRel, CommandBlockEntity.class);
+        CommandBlockEntity oldRef = helper.getBlockEntity(oldRefRel, CommandBlockEntity.class); // taken before the recording
+        read.getCommandBlock().setCommand("say original");
+        oldRef.getCommandBlock().setCommand("say original");
+        BlockPos readAbs = helper.absolutePos(readRel);
+        BlockPos oldRefAbs = helper.absolutePos(oldRefRel);
+
+        UndoLog log = UndoLog.begin(level);
+        CauseTracker tracker = CauseTracker.begin(level, 1L);
+        try {
+            tracker.runAsChain(() -> {
+                CommandBlockEntity be = (CommandBlockEntity) level.getBlockEntity(readAbs); // the first read: snapshot here
+                be.getCommandBlock().setCommand("say changed");
+                be.setChanged();
+                oldRef.getCommandBlock().setCommand("say changed"); // never read through the level during the recording
+                oldRef.setChanged();
+            });
+        } finally {
+            tracker.end();
+        }
+        helper.assertTrue("say changed".equals(read.getCommandBlock().getCommand()), "setup: the recording did not change the command block");
+        boolean readInFootprint = tracker.reads().getOrDefault(readAbs, java.util.Set.of()).contains(CauseTracker.ReadKind.BLOCK_ENTITY)
+            && tracker.writes().contains(readAbs);
+        java.util.Set<BlockPos> late = new java.util.HashSet<>(log.lateBlockEntities());
+        log.restore();
+        helper.assertTrue(readInFootprint, "block entity read/write missing from the footprint");
+        String after = helper.getBlockEntity(readRel, CommandBlockEntity.class).getCommandBlock().getCommand();
+        helper.assertTrue("say original".equals(after), "block entity read before the change not restored exactly: " + after);
+        helper.assertTrue(!late.contains(readAbs), "block entity that was read first is reported as late: " + late);
+        helper.assertTrue(late.contains(oldRefAbs), "block entity changed without a read is not reported as late: " + late);
+        helper.succeed();
     }
 }
