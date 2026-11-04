@@ -1,6 +1,8 @@
 package obsidivision.ghostpath.record;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -18,6 +20,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.item.FallingBlockEntity;
+import net.minecraft.world.entity.item.PrimedTnt;
+import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.BlockEventData;
@@ -134,6 +141,8 @@ public final class CauseTracker {
     /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
     private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
     private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
+    /** Chain entities whose tick is running now, innermost last (passengers tick inside their vehicle's tick). */
+    private final Deque<Entity> ticking = new ArrayDeque<>();
 
     private CauseTracker(ServerLevel level, long seed, boolean kick) {
         this.kick = kick;
@@ -236,6 +245,9 @@ public final class CauseTracker {
     /** A chain block entity counts as busy for this many ticks after chain work last changed it (ruling). */
     public static final int BLOCK_ENTITY_BUSY_TICKS = 8;
 
+    /** Marks an unseeded draw made inside a tagged mob's tick (UNSEEDED_DRAW detail). */
+    public static final String INEXACT_MOB_AI = "inexact: mob AI";
+
     /**
      * Pending chain work: scheduled ticks and block events queued by the chain and not yet run or removed; chain
      * entities still in the level (an item that has lain still on the ground for two ticks is settled: items stay for
@@ -249,6 +261,9 @@ public final class CauseTracker {
         for (Entity e : this.chainEntities.keySet()) {
             if (e.isRemoved() || this.level.getEntity(e.getId()) != e) {
                 continue; // gone, or tagged in its constructor and never added
+            }
+            if (!canHoldOpen(e)) {
+                continue; // living mobs, armor stands, ...: tagged, but never pending (ruling)
             }
             if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= 2) {
                 continue;
@@ -278,6 +293,16 @@ public final class CauseTracker {
     public List<ChainEvent> notFollowed() {
         return this.events.stream().filter(e -> e.kind() == ChainEvent.Kind.CHAIN_UNLOADED || e.kind() == ChainEvent.Kind.LEFT_DIMENSION
             || e.kind() == ChainEvent.Kind.VIBRATION_UNTRACKED).toList();
+    }
+
+    /**
+     * The only entity kinds that can hold a recording open (ruling): TNT, projectiles, items (until settled), vehicles
+     * (boats, minecarts: {@code VehicleEntity}) and falling blocks. Tagged mobs and everything else stay chain work but
+     * never count as pending.
+     */
+    public static boolean canHoldOpen(Entity e) {
+        return e instanceof PrimedTnt || e instanceof Projectile || e instanceof ItemEntity || e instanceof VehicleEntity
+            || e instanceof FallingBlockEntity;
     }
 
     /** Columns whose heightmap chain work read (a real block change in the column can change the height). */
@@ -610,8 +635,16 @@ public final class CauseTracker {
         return this.chainEntities.containsKey(entity);
     }
 
+    /** Before a chain entity's tick (ServerLevelMixin); paired with {@link #onChainEntityTicked}. */
+    public void onChainEntityTickStart(Entity entity) {
+        this.ticking.addLast(entity);
+    }
+
     /** After a chain entity's tick. */
     public void onChainEntityTicked(Entity entity) {
+        if (this.ticking.peekLast() == entity) {
+            this.ticking.removeLast();
+        }
         Integer index = this.chainEntities.get(entity);
         if (index == null) {
             return;
@@ -634,10 +667,12 @@ public final class CauseTracker {
         String[] site = callSite();
         String reason = UnseededDrawAllowlist.reason(site[1]);
         String display = source + "." + method + " at " + site[0];
-        if (this.unseededSites.merge(display, 1, Integer::sum) == 1 && reason == null) {
+        // a draw inside the tick of a tagged mob is its AI (goals, look and stroll targets, ...): inexact, not a warning (ruling)
+        boolean mobAi = reason == null && this.ticking.peekLast() instanceof Mob;
+        if (this.unseededSites.merge(display, 1, Integer::sum) == 1 && reason == null && !mobAi) {
             LOGGER.warn("[ghostpath] unseeded draw by chain work, not on the allowlist: {}", display);
         }
-        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason == null ? " WARNING: not allowed" : " allowed: " + reason));
+        this.log(ChainEvent.Kind.UNSEEDED_DRAW, null, display + (reason != null ? " allowed: " + reason : mobAi ? " " + INEXACT_MOB_AI : " WARNING: not allowed"));
     }
 
     /**

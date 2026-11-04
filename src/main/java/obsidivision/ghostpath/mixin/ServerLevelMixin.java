@@ -112,8 +112,14 @@ public abstract class ServerLevelMixin {
     private void ghostpath$chainEntityTick(Entity entity, Operation<Void> original) {
         CauseTracker tracker = CauseTracker.active();
         boolean chain = tracker != null && tracker.isChainEntity(entity);
-        CauseTracker.within(tracker, chain, () -> original.call(entity));
-        if (chain) {
+        if (!chain) {
+            CauseTracker.within(tracker, false, () -> original.call(entity));
+            return;
+        }
+        tracker.onChainEntityTickStart(entity);
+        try {
+            CauseTracker.within(tracker, true, () -> original.call(entity));
+        } finally {
             tracker.onChainEntityTicked(entity);
         }
     }
@@ -123,8 +129,14 @@ public abstract class ServerLevelMixin {
     private void ghostpath$chainPassengerTick(Entity vehicle, Entity entity, Operation<Void> original) {
         CauseTracker tracker = CauseTracker.active();
         boolean chain = tracker != null && tracker.isChainEntity(entity);
-        CauseTracker.within(tracker, chain, () -> original.call(vehicle, entity));
-        if (chain) {
+        if (!chain) {
+            CauseTracker.within(tracker, false, () -> original.call(vehicle, entity));
+            return;
+        }
+        tracker.onChainEntityTickStart(entity);
+        try {
+            CauseTracker.within(tracker, true, () -> original.call(vehicle, entity));
+        } finally {
             tracker.onChainEntityTicked(entity);
         }
     }

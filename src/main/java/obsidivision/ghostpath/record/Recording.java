@@ -33,6 +33,9 @@ import net.minecraft.world.phys.AABB;
  * @param unseededDraws   chain draws from an unseeded random, by call site, with {@code allowed} or not
  * @param lateBlockEntities block entities that were changed before the undo log saw them (not restored exactly)
  * @param ticksNotRestored begin-time scheduled ticks the undo log could not put back
+ * @param unseededDrawsInexact unseeded draws made inside a tagged mob's tick ("inexact: mob AI"): the run may not repeat exactly
+ * @param weatherAtStart  rain and thunder state when the trigger was pressed (ruling: for the ghost)
+ * @param weatherAtEnd    the same at the end of the recording (before the restore; weather is not restored)
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -54,18 +57,25 @@ public record Recording(
     int tntSpawned,
     int unseededDrawsNotAllowed,
     int unseededDrawsAllowed,
+    int unseededDrawsInexact,
     Set<BlockPos> lateBlockEntities,
     int ticksNotRestored,
+    Weather weatherAtStart,
+    Weather weatherAtEnd,
     List<String> notFollowed
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
-                        CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime) {
+                        CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
+                        Weather weatherAtEnd) {
         int notAllowed = 0;
         int allowed = 0;
+        int inexact = 0;
         for (ChainEvent e : tracker.events()) {
             if (e.kind() == ChainEvent.Kind.UNSEEDED_DRAW) {
                 if (e.detail().contains("WARNING: not allowed")) {
                     notAllowed++;
+                } else if (e.detail().endsWith(CauseTracker.INEXACT_MOB_AI)) {
+                    inexact++;
                 } else {
                     allowed++;
                 }
@@ -81,9 +91,10 @@ public record Recording(
             Set.copyOf(new LinkedHashSet<>(tracker.entityAreas())),
             Set.copyOf(new LinkedHashSet<>(tracker.heightmapColumns())),
             tracker.addedChainEntities(net.minecraft.world.entity.EntityTypes.TNT),
-            notAllowed, allowed,
+            notAllowed, allowed, inexact,
             Set.copyOf(undo.lateBlockEntities()),
             undo.ticksNotRestored(),
+            weatherAtStart, weatherAtEnd,
             tracker.notFollowed().stream().map(ChainEvent::toString).toList());
     }
 
@@ -106,9 +117,14 @@ public record Recording(
             + ", heightmap columns " + this.heightmapColumns.size() + ")");
         out.add("TNT spawned: " + this.tntSpawned);
         out.add("Unseeded draws: " + this.unseededDrawsNotAllowed + " warnings"
-            + (this.unseededDrawsAllowed > 0 ? " (+" + this.unseededDrawsAllowed + " allowed)" : ""));
+            + (this.unseededDrawsAllowed > 0 ? " (+" + this.unseededDrawsAllowed + " allowed)" : "")
+            + (this.unseededDrawsInexact > 0 ? " (+" + this.unseededDrawsInexact + " " + CauseTracker.INEXACT_MOB_AI + ")" : ""));
         out.add("Late block entities: " + this.lateBlockEntities.size()
             + (this.ticksNotRestored > 0 ? "; scheduled ticks not restored: " + this.ticksNotRestored : ""));
+        out.add("Weather: " + this.weatherAtStart + " at start" + (this.weatherAtEnd.toString().equals(this.weatherAtStart.toString()) ? "" : ", " + this.weatherAtEnd + " at end"));
+        if (this.unseededDrawsInexact > 0) {
+            out.add("Inexact: a tagged mob's AI drew from an unseeded random, so the result may not repeat exactly");
+        }
         if (!this.notFollowed.isEmpty()) {
             // they count as gone for pending(), but the summary names each one (ruling, gaps 2, 7, 8)
             out.add("Not followed: " + this.notFollowed.size() + " - " + String.join("; ", this.notFollowed));

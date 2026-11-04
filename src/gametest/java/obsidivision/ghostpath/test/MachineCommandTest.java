@@ -45,7 +45,7 @@ public class MachineCommandTest {
     private static Runnable restoreWeather = () -> {};
     private static final Pattern VELOCITY = Pattern.compile("minecraft:tnt pos=\\(.*\\) v=\\(([^,]+), ([^,]+), ([^)]+)\\)");
 
-    private static final class Capture implements CommandSource {
+    static final class Capture implements CommandSource {
         final List<String> lines = new ArrayList<>();
 
         @Override
@@ -102,7 +102,7 @@ public class MachineCommandTest {
     }
 
     /** Runs {@code /path machine pos} and calls {@code then} with the captured output once the recording is over. */
-    private static void runCommand(GameTestHelper helper, ServerLevel level, Capture capture, BlockPos pos, Runnable then) {
+    static void runCommand(GameTestHelper helper, ServerLevel level, Capture capture, BlockPos pos, Runnable then) {
         MinecraftServer server = level.getServer();
         server.getCommands().performPrefixedCommand(source(level, capture, LevelBasedPermissionSet.GAMEMASTER),
             "path machine " + pos.getX() + " " + pos.getY() + " " + pos.getZ());

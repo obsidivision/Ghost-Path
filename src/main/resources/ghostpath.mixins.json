@@ -30,6 +30,7 @@
     "LevelReadMixin",
     "LevelTicksAccessor",
     "LevelTicksMixin",
+    "LevelWeatherAccessor",
     "LivingEntityAccessor",
     "PrimedTntMixin",
     "ServerExplosionMixin",

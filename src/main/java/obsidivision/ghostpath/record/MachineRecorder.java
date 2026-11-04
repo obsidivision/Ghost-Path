@@ -19,9 +19,9 @@ import org.slf4j.LoggerFactory;
  * scheduled ticks and block events of this tick are done). One recording at a time. The real recording never
  * force-loads a chunk or changes a ticket (R9): the position must already be loaded.
  *
- * <p>Not covered: the world is saved by the server's autosave, or by a stop request, with the machine half-run. A stop
- * request restores first ({@link #abort}); an autosave in the middle of a recording cannot be prevented (at most 2000
- * ticks by default).
+ * <p>Saving is off for the whole recording ({@link SaveGuard}): no autosave writes the half-run machine. It is put back
+ * after the restore on every way out (normal end, tick limit, failure, cancel, server stop). A stop request restores
+ * first ({@link #abort}). Not covered: {@code /save-all} (forced save) during a recording, and a crash.
  */
 public final class MachineRecorder {
     private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
@@ -72,15 +72,23 @@ public final class MachineRecorder {
         }
         BlockPos trigger = pos.immutable();
         long startTime = level.getGameTime();
-        UndoLog undo = UndoLog.begin(level);
+        Weather weather = Weather.of(level);
+        SaveGuard saves = SaveGuard.begin(level.getServer());
+        UndoLog undo;
         CauseTracker tracker;
         try {
-            tracker = CauseTracker.begin(level, SEED, kick);
+            undo = UndoLog.begin(level);
+            try {
+                tracker = CauseTracker.begin(level, SEED, kick);
+            } catch (RuntimeException e) {
+                undo.abandon();
+                throw e;
+            }
         } catch (RuntimeException e) {
-            undo.abandon();
+            saves.end();
             throw e;
         }
-        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime);
+        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather);
         current = recorder;
         try {
             tracker.runAsChain(() -> press(level, trigger, state));
@@ -126,10 +134,14 @@ public final class MachineRecorder {
     private final UndoLog undo;
     private final CauseTracker tracker;
     private final long startTime;
+    private final SaveGuard saves;
+    private final Weather weatherAtStart;
     private int serverTicks;
 
     private MachineRecorder(ServerLevel level, BlockPos trigger, int limit, boolean kick, Listener listener, UndoLog undo,
-                            CauseTracker tracker, long startTime) {
+                            CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart) {
+        this.saves = saves;
+        this.weatherAtStart = weatherAtStart;
         this.level = level;
         this.trigger = trigger;
         this.limit = limit;
@@ -153,18 +165,22 @@ public final class MachineRecorder {
         }
         // game time, not server ticks, is what the events are counted in; a frozen game (/tick freeze) still ends at the limit
         int ticks = (int) (this.level.getGameTime() - this.startTime);
+        Weather weatherAtEnd = Weather.of(this.level);
         this.tracker.end();
         Recording recording;
         try {
             this.undo.restore();
-            recording = Recording.of(this.tracker, this.undo, this.trigger, ticks, this.limit, limitHit, pending, this.kick, SEED, this.startTime);
+            recording = Recording.of(this.tracker, this.undo, this.trigger, ticks, this.limit, limitHit, pending, this.kick, SEED, this.startTime,
+                this.weatherAtStart, weatherAtEnd);
         } catch (RuntimeException e) {
             current = null;
+            this.saves.end();
             LOGGER.error("[ghostpath] restoring the world after the recording failed", e);
             this.listener.failed("restoring the world failed: " + e);
             return;
         }
         current = null;
+        this.saves.end();
         RecordingStore.set(recording);
         this.listener.done(recording);
     }
@@ -176,6 +192,7 @@ public final class MachineRecorder {
             this.undo.restore();
         } finally {
             current = null;
+            this.saves.end();
         }
     }
 }
