@@ -33,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * {@code ProjectileHitMixin}). The work is spread over client ticks ({@link #BUDGET_NANOS} per tick); the renderer draws
  * what is done so far. A new snapshot (another serial) or another client level starts everything over.
  */
-final class Tails {
+public final class Tails {
     private static final Logger LOGGER = LoggerFactory.getLogger("ghostpath");
     /** Ticks a continuation may run. */
     static final int MAX_TICKS = 6000;
@@ -41,12 +41,12 @@ final class Tails {
     static final long BUDGET_NANOS = 3_000_000L;
 
     /** One continuation. Client thread only. */
-    static final class Job {
+    public static final class Job {
         final PathSnapshot.Line line;
         final PathSnapshot.Tail tail;
         /** Tick (relative to the recording) of the first continued point is {@code line.end().tick() + 1}. */
-        final LongArrayList ticks = new LongArrayList();
-        final DoubleArrayList xyz = new DoubleArrayList();
+        public final LongArrayList ticks = new LongArrayList();
+        public final DoubleArrayList xyz = new DoubleArrayList();
         private @Nullable Entity copy;
         private int run;
         private @Nullable String endReason;
@@ -56,16 +56,16 @@ final class Tails {
             this.tail = tail;
         }
 
-        boolean done() {
+        public boolean done() {
             return this.endReason != null;
         }
 
         /** Why the continuation ended; null while it still runs. */
-        @Nullable String endReason() {
+        public @Nullable String endReason() {
             return this.endReason;
         }
 
-        int points() {
+        public int points() {
             return this.ticks.size();
         }
 
@@ -153,7 +153,7 @@ final class Tails {
     }
 
     /** The continuation of line {@code index} of the snapshot, or null (no tail, or not started for this snapshot). */
-    static @Nullable Job job(PathSnapshot snapshot, int index) {
+    public static @Nullable Job job(PathSnapshot snapshot, int index) {
         return snapshot.serial() == serial ? JOBS.get(index) : null;
     }
 

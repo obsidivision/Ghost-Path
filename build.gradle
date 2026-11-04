@@ -24,7 +24,7 @@ fabricApi {
         createSourceSet = true
         modId = 'ghostpath-gametest'
         eula = true
-        enableClientGameTests = false
+        enableClientGameTests = true
     }
 }
 

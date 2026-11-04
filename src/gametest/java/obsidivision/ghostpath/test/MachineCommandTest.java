@@ -127,12 +127,20 @@ public class MachineCommandTest {
         weather.setRaining(true);
         weather.setRainTime(1_000_000);
         level.setRainLevel(1.0F);
+        // thunder is pinned like the rain: thundering with the level at its target, so it does not ramp between two recordings
+        // (seen without: thunder level 0.41 at the start of the first recording, 1.0 at the start of the second)
+        boolean wasThundering = weather.isThundering();
+        int wasThunderTime = weather.getThunderTime();
         float wasThunderLevel = level.getThunderLevel(1.0F);
-        level.setThunderLevel(1.0F); // pinned like the rain level: a thunder level still ramping up differs between two recordings (seen: 0.41 vs 1.0)
+        weather.setThundering(true);
+        weather.setThunderTime(1_000_000);
+        level.setThunderLevel(1.0F);
         restoreWeather = () -> {
             weather.setRaining(wasRaining);
             weather.setRainTime(wasRainTime);
             level.setRainLevel(wasRainLevel);
+            weather.setThundering(wasThundering);
+            weather.setThunderTime(wasThunderTime);
             level.setThunderLevel(wasThunderLevel);
         };
         CauseTrackingTest.buildMachine(helper, BlockPos.ZERO, true);

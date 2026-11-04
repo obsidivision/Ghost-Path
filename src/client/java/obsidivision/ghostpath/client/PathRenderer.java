@@ -19,7 +19,12 @@ import obsidivision.ghostpath.record.CauseTracker.FlightKind;
  * client ({@link Tails}) is drawn in a lighter colour and labelled "continued". Nothing is read from the ghost or from a
  * world: only the snapshot.
  */
-final class PathRenderer {
+public final class PathRenderer {
+    /** Frames in which paths were submitted, and the lines and segments of the last such frame (read by the client game test). */
+    public static volatile int framesDrawn;
+    public static volatile int lastLines;
+    public static volatile int lastSegments;
+
     private static final float LINE_WIDTH = 2.0F;
     private static final float DOT_SIZE = 6.0F;
     private static final float END_DOT_SIZE = 10.0F;
@@ -76,6 +81,8 @@ final class PathRenderer {
         int offset = PathSettings.dotOffset;
         int[] budget = {MAX_SEGMENTS};
         List<PathSnapshot.Line> lines = s.lines();
+        framesDrawn++;
+        lastLines = lines.size();
         for (int i = 0; i < lines.size(); i++) {
             PathSnapshot.Line l = lines.get(i);
             int color = color(l.kind());
@@ -117,6 +124,7 @@ final class PathRenderer {
                 }
             }
         }
+        lastSegments = MAX_SEGMENTS - budget[0];
     }
 
     private static Vec3 at(double[] xyz, int i, double up) {
