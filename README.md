@@ -13,7 +13,7 @@ Put `ghostpath-0.1.0.jar` and the Fabric API jar in your `mods` folder. Cheats m
 ## How to use it
 
 1. Build your machine. Stand where you can see it.
-2. Look at the lever or button that starts it, and run `/path machine <x> <y> <z>` with that block's position.
+2. Look at the block that starts it, and run `/path machine <x> <y> <z>` with that block's position. Supported triggers: **lever, button, note block** (a right click tunes it one note up), **trapdoor, door and fence gate** (not iron: they open by hand), **repeater** (delay +1) and **comparator** (switches mode). Each is pressed the way a right click does it, without a player (a fence gate does not turn to face you and makes no sound). Anything else: the chat lists the supported blocks. A rerun first puts the trigger back to the state you recorded (for a note block: the recorded note) and presses it again.
 3. The mod presses the trigger, follows everything the machine sets in motion until it is quiet, and puts the world back as it was. The chat shows a summary. Lines and dots now hang in the world.
 
 What the summary means:
@@ -27,9 +27,18 @@ What the summary means:
 
 ### Live updates
 
-After `/path machine` the machine is watched. When you place or break a block that the machine reads or writes, wait about half a second (10 quiet ticks) and the mod reruns it in a fresh copy. The chat says `rerun: N ticks, K TNT spawned, ...` and what changed since last time, and the lines move to the new prediction. If the real lever is already on, the chat says so; the prediction is still for the press from off to on.
+After `/path machine` the machine is watched. When you place or break a block that the machine reads or writes, **or one next to a block the machine changed, or within 2 blocks of one** (`/path watch margin <n>`, 0 to 8; measured from the machine's own blocks, so a long thin machine watches a thin tube), wait about half a second (10 quiet ticks) and the mod reruns it in a fresh copy. The chat says `rerun: N ticks, K TNT spawned, ...` and what changed since last time, and the lines move to the new prediction. If the real lever is already on, the chat says so; the prediction is still for the press from off to on.
 
 - `/path watch list` shows what is watched. `/path watch stop` (or `stop <x y z>`) stops it.
+- `/path rerun` (or `/path rerun <x y z>`) reruns the watched machine(s) now, without waiting for a change (it still waits until the real machine is idle). Several watched machines, even in one chunk, rerun one after the other.
+- The chat line also says how long the copy took: `copied in 40 ms over 12 ticks`. A long machine's copy is spread over server ticks with the same time budget as the run, so the game does not stall.
+- A change of air to air, or in a chunk that is not loaded, does not count.
+
+### Ghost area
+
+`/path area on` shows what the machine touched, as boxes: **orange** (strong, filled) for blocks the machine **wrote**, **thin blue** for blocks it only **read**. The block change that started the last rerun is highlighted yellow for a few seconds with a label like `rerun: piston placed`. At most 2000 boxes are drawn; the top left says so when there were more. Two optional layers: `/path area watched on` (green: the margin around the machine's blocks, the area whose changes rerun it) and `/path area chunks on` (the chunks the last run copied; chunks a widened run added are magenta). `/path area off` hides it. The overlay is updated with the lines after every recording and rerun. A key is available in the controls ("Show or hide the ghost area") but **unbound** by default.
+
+![the ghost area](docs/img/path-area.png)
 
 ### Looking at a path
 
@@ -52,10 +61,14 @@ After `/path machine` the machine is watched. When you place or break a block th
 | `/path kick on\|off` | The small random push TNT gets when lit. Off: drawn without the sideways part, so the path does not wobble. |
 | `/path limit <ticks>` | The longest a recording may run (default 2000). |
 | `/path watch list\|stop` | See or stop watched machines. |
+| `/path watch margin <n>` | Blocks around the machine's own blocks whose change reruns it (default 2; the six neighbours always count). |
+| `/path rerun [x y z]` | Rerun the watched machine(s) now. |
+| `/path area on\|off` | The machine's footprint as boxes (see "Ghost area"). |
+| `/path area watched\|chunks on\|off` | The watched margin; the copied chunks. |
 | `/path inspect hold\|toggle` | How the inspect key works. |
 | `/path pins clear` | Remove all pins. |
 
-Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect.
+Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect, and one for the ghost area (unbound).
 
 ## End reasons
 
@@ -76,9 +89,10 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect.
 ## Known gaps
 
 - **Portals** are not simulated; a path that reaches one ends there. Entities that change dimension are not followed.
-- **Players** are not in the hidden copy: a player standing in the machine's way, riding something, or pushed by TNT is not predicted.
+- **Players** are not in the hidden copy: a player standing in the machine's way, riding something, or pushed by TNT is not predicted. **Player-owned ender pearls** keep chunks loaded around them in the real game; the copy cannot do that, and the summary says `player-owned pearl: chunk loading not simulated`. (A machine's own pearls, from a dispenser, load nothing in the real game either.)
 - **Mobs**: a machine that depends on mobs (their AI, sheep shearing, villagers, bees) cannot be predicted exactly. The summary says `inexact`.
 - **Sculk sensors and other listeners** far from the machine, and anything the machine only reaches through vibrations to mobs, are not followed. Points of interest (villager jobs, bees, lightning rods) are not copied.
+- **Loot** (a block's drops, such as flint from gravel) is rolled from the same numbers in the real run and the copy, and your world's own loot sequences are not used up by a recording.
 - **Chance outside the machine**: random block ticks (crops, fire, ice), weather changes, and mob spawning do not run in the hidden copy.
 - **Light** and things like redstone torch burn-out history, trial spawners, vaults and bells (which keep absolute times) are not carried over exactly.
 - **The world border** is not copied.

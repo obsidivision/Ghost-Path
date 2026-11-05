@@ -397,33 +397,37 @@ public class RerunTriggersTest {
     public void twoMachinesInOneChunkRerunOneAfterTheOther(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         Capture chat = new Capture();
-        BlockPos lever2 = LEVER.offset(0, 0, 4);
-        buildM(helper, 0);
-        for (int z = 0; z <= 12; z++) {
-            helper.setBlock(new BlockPos(0, 1, z), Blocks.STONE);
+        // the test structure sits at a different place each run: shift both machines so that they start at a chunk corner (and so share a chunk)
+        BlockPos o = helper.absolutePos(BlockPos.ZERO);
+        BlockPos off = new BlockPos((16 - (o.getX() & 15)) & 15, 0, (16 - (o.getZ() & 15)) & 15);
+        BlockPos lever1 = LEVER.offset(off);
+        BlockPos lever2 = LEVER.offset(off).offset(0, 0, 4);
+        TestSupport.removeBarriers(helper);
+        TestSupport.forceAround(helper, 3);
+        for (int x = -1; x <= 20; x++) {
+            for (int z = 0; z <= 20; z++) {
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
+            }
         }
-        helper.setBlock(new BlockPos(0, 2, 6), Blocks.STONE);
-        helper.setBlock(lever2, Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR));
-        helper.setBlock(new BlockPos(1, 2, 6), Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
-        helper.setBlock(new BlockPos(2, 2, 6), Blocks.STONE);
-        ready(helper, () -> LiveRerunTest.recordAndWatch(helper, level, chat, LEVER, (rec1, w1) -> guard(helper, () -> recordMore(helper, level, chat, lever2, (rec2, w2) -> guard(helper, () -> {
+        for (int m = 0; m < 2; m++) {
+            BlockPos b = off.offset(0, 0, 4 * m);
+            helper.setBlock(new BlockPos(0, 2, 2).offset(b), Blocks.STONE);
+            helper.setBlock(LEVER.offset(b), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR));
+            helper.setBlock(PA.offset(b), Blocks.PISTON.defaultBlockState().setValue(PistonBaseBlock.FACING, Direction.EAST));
+            helper.setBlock(new BlockPos(2, 2, 2).offset(b), Blocks.STONE);
+        }
+        List<BlockPos> corners = List.of(new BlockPos(0, 2, 0), new BlockPos(20, 2, 20), new BlockPos(3, 2, 2).offset(off), new BlockPos(3, 2, 6).offset(off));
+        LiveRerunTest.whenTicking(helper, corners, TestSupport.once(() -> LiveRerunTest.recordAndWatch(helper, level, chat, lever1, (rec1, w1) -> guard(helper, () -> recordMore(helper, level, chat, lever2, (rec2, w2) -> guard(helper, () -> {
             helper.assertTrue(LiveWatch.watches().size() == 2, "watches: " + LiveWatch.list());
             helper.assertTrue(rec1.trigger().getX() >> 4 == rec2.trigger().getX() >> 4 && rec1.trigger().getZ() >> 4 == rec2.trigger().getZ() >> 4, "the machines are not in one chunk");
-            BlockPos both = new BlockPos(3, 3, 4); // two cells from X1 (3,2,2) and from X2 (3,2,6)
+            BlockPos both = new BlockPos(3, 3, 4).offset(off); // two cells from X1 and from X2 (3,2,2 / 3,2,6)
             helper.assertTrue(w1.footprint().cause(helper.absolutePos(both), 2) != null && w2.footprint().cause(helper.absolutePos(both), 2) != null, "the cell is not near both");
             helper.setBlock(both, Blocks.STONE);
             helper.assertTrue(w1.dirty() && w2.dirty(), "one change did not mark both: " + LiveWatch.list());
-            int[] both_running = {0};
-            LiveRerunTest.waitFor(helper, "both reruns", 60000, () -> {
-                notFired(helper, level, 0);
-                if (LiveWatch.running() != null) {
-                    both_running[0]++;
-                }
-            }, () -> w1.reruns() >= 1 && w2.reruns() >= 1, () -> guard(helper, () -> {
+            LiveRerunTest.waitFor(helper, "both reruns", 60000, () -> { }, () -> w1.reruns() >= 1 && w2.reruns() >= 1, () -> guard(helper, () -> {
                 helper.assertTrue(w1.failures() == 0 && w2.failures() == 0 && chat.lines.stream().noneMatch(l -> l.contains("rerun failed")), "a rerun failed: " + chat.lines);
                 helper.assertTrue(w1.cancelled() == 0 && w2.cancelled() == 0, "a run was cancelled: " + w1.cancelled() + "/" + w2.cancelled());
                 helper.assertTrue(chat.lines.stream().filter(l -> l.startsWith("rerun:")).count() == 2, "rerun lines: " + chat.lines);
-                // targeted, then all
                 int a = w1.reruns();
                 int b = w2.reruns();
                 BlockPos abs2 = helper.absolutePos(lever2);
@@ -439,6 +443,6 @@ public class RerunTriggersTest {
                     }));
                 }));
             }));
-        })))));
+        }))))), 0);
     }
 }
