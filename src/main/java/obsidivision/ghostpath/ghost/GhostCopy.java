@@ -641,7 +641,9 @@ public final class GhostCopy {
         GhostLevelAccessor tickers = (GhostLevelAccessor) real;
         for (List<TickingBlockEntity> list : List.of(tickers.ghostpath$blockEntityTickers(), tickers.ghostpath$pendingBlockEntityTickers())) {
             for (TickingBlockEntity t : list) {
-                if (!t.isRemoved() && keys.contains(ChunkPos.pack(t.getPos()))) {
+                // Lithium (block_entity_ticking.sleeping) replaces the ticker of a sleeping block entity with a shared one whose
+                // getPos() is null: nothing to follow, the block entity itself comes in with its chunk below
+                if (t.getPos() != null && !t.isRemoved() && keys.contains(ChunkPos.pack(t.getPos()))) {
                     order.add(t.getPos().immutable());
                 }
             }

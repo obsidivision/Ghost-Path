@@ -105,6 +105,29 @@ public final class PathCommand {
             .then(Commands.literal("inspect")
                 .then(Commands.literal("hold").executes(ctx -> inspectMode(ctx.getSource(), false)))
                 .then(Commands.literal("toggle").executes(ctx -> inspectMode(ctx.getSource(), true))))
+            .then(Commands.literal("hover")
+                .then(Commands.literal("compact").executes(ctx -> hoverDetail(ctx.getSource(), "compact")))
+                .then(Commands.literal("full").executes(ctx -> hoverDetail(ctx.getSource(), "full")))
+                .then(Commands.literal("key").executes(ctx -> hoverDetail(ctx.getSource(), "key")))
+                .then(Commands.literal("off").executes(ctx -> hoverDetail(ctx.getSource(), "off")))
+                .then(Commands.literal("range")
+                    .then(Commands.argument("blocks", IntegerArgumentType.integer(1, (int) obsidivision.ghostpath.inspect.Picker.MAX_DISTANCE))
+                        .executes(ctx -> {
+                            PathSettings.hoverRange = IntegerArgumentType.getInteger(ctx, "blocks");
+                            ctx.getSource().sendSuccess(() -> Chat.info("Hover range: " + PathSettings.hoverRange + " blocks"), false);
+                            return 1;
+                        })))
+                .then(Commands.literal("anchor")
+                    .then(Commands.literal("cursor").executes(ctx -> hoverAnchor(ctx.getSource(), "cursor")))
+                    .then(Commands.literal("corner").executes(ctx -> hoverAnchor(ctx.getSource(), "corner")))))
+            .then(Commands.literal("labels")
+                .then(Commands.literal("size")
+                    .then(Commands.argument("percent", IntegerArgumentType.integer(40, 200))
+                        .executes(ctx -> {
+                            PathSettings.labelPercent = IntegerArgumentType.getInteger(ctx, "percent");
+                            ctx.getSource().sendSuccess(() -> Chat.info("Label size: " + PathSettings.labelPercent + "%"), false);
+                            return 1;
+                        }))))
             .then(Commands.literal("pins")
                 .then(Commands.literal("clear").executes(ctx -> pinsClear(ctx.getSource()))))
             .then(Commands.literal("interval")
@@ -229,6 +252,23 @@ public final class PathCommand {
     private static int inspectMode(CommandSourceStack source, boolean toggle) {
         PathSettings.inspectToggle = toggle;
         source.sendSuccess(() -> Chat.info("Inspect key: " + (toggle ? "press to switch on or off" : "hold")), false);
+        return 1;
+    }
+
+    private static int hoverDetail(CommandSourceStack source, String mode) {
+        PathSettings.hoverDetail = mode;
+        source.sendSuccess(() -> Chat.info("Hover: " + switch (mode) {
+            case "compact" -> "short panel";
+            case "full" -> "full panel, exact values";
+            case "key" -> "short panel, only while the inspect key is held";
+            default -> "off (the inspect key still hovers)";
+        }), false);
+        return 1;
+    }
+
+    private static int hoverAnchor(CommandSourceStack source, String anchor) {
+        PathSettings.hoverAnchor = anchor;
+        source.sendSuccess(() -> Chat.info("Hover panel: " + (anchor.equals("corner") ? "top left corner" : "beside the crosshair")), false);
         return 1;
     }
 

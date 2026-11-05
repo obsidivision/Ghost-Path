@@ -44,6 +44,18 @@ public final class PathSettings {
 
     /** {@code /path inspect hold|toggle}: whether the inspect key works while it is held (default) or each press switches it on or off. */
     public static volatile boolean inspectToggle = false;
+    /**
+     * {@code /path hover compact|full|key|off}: what the crosshair hover shows. compact (default): a few lines (type, tick, position and velocity
+     * rounded, fuse / end); full: every line with the exact doubles; key: compact, but only while the inspect key is held; off: no hover
+     * (the inspect key still hovers, for pins).
+     */
+    public static volatile String hoverDetail = "compact";
+    /** {@code /path hover range <blocks>}: how far the hover ray reaches (at most {@code Picker.MAX_DISTANCE}). */
+    public static volatile int hoverRange = 32;
+    /** {@code /path hover anchor cursor|corner}: the hover panel beside the crosshair, or in the top left corner. */
+    public static volatile String hoverAnchor = "cursor";
+    /** {@code /path labels size <percent>}: multiplies the size of the labels on the paths (100 = normal). */
+    public static volatile int labelPercent = 100;
     /** {@code /path pins clear}: raised each time; the client clears its pins when it sees a new value. */
     public static volatile int pinsClearSerial = 0;
 

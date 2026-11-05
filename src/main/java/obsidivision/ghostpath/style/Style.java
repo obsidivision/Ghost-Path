@@ -148,10 +148,10 @@ public record Style(
         return dist >= this.labelFadeEnd ? 0.0 : 1.0 - (dist - this.labelFadeStart) / (this.labelFadeEnd - this.labelFadeStart);
     }
 
-    /** Scale of a label's text at {@code dist}: 1 up to {@code labelNear} blocks, growing to 2x at {@code labelFar}. */
+    /** Scale of a label's text at {@code dist}: 1 up to {@code labelNear} blocks, growing to 1.25x at {@code labelFar}, times {@code /path labels size}. */
     public float labelScale(double dist) {
         double f = dist <= this.labelNear ? 0.0 : dist >= this.labelFar ? 1.0 : (dist - this.labelNear) / (this.labelFar - this.labelNear);
-        return (float) (1.0 + f);
+        return (float) ((1.0 + 0.25 * f) * PathSettings.labelPercent / 100.0);
     }
 
     /** Alpha (0..1) of a toast {@code elapsed} seconds after it appeared: fades in, holds, fades out, then 0. */

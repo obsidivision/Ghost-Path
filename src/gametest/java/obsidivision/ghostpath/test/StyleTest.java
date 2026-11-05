@@ -51,7 +51,7 @@ public class StyleTest {
                 lastLabel = lb;
                 lastDot = ds;
             }
-            helper.assertTrue(st.labelScale(0) == 1.0F && st.labelScale(1000) == 2.0F && st.labelDistanceAlpha(1000) == 0.0, st.name() + ": label scale/fade ends");
+            helper.assertTrue(st.labelScale(0) == 1.0F && st.labelScale(1000) == 1.25F && st.labelDistanceAlpha(1000) == 0.0, st.name() + ": label scale/fade ends");
             // toast: fades in, holds, fades out
             helper.assertTrue(st.toastAlpha(0) == 0.0 && st.toastAlpha(st.toastIn() + 0.01) == 1.0 && st.toastAlpha(st.toastSeconds() + 1e-9) == 0.0 && st.toastAlpha(st.toastIn() / 2) > 0.0
                 && st.toastAlpha(st.toastIn() + st.toastHold() + st.toastOut() / 2) > 0.0 && st.toastAlpha(st.toastIn() + st.toastHold() + st.toastOut() / 2) < 1.0, st.name() + ": toast curve");
