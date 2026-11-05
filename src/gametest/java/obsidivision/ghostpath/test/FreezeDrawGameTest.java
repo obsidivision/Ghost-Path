@@ -59,8 +59,8 @@ public class FreezeDrawGameTest implements FabricClientGameTest {
             server.runCommand("tp @a " + (where[0] - 0.0) + " " + (where[1] - 1.0) + " " + (where[2] + 45) + " 180 -3");
             context.waitTicks(60);
             Path shot = ClientShots.capture(context, "freeze-draw");
-            int red = ClientShots.count(shot, c -> ClientShots.r(c) > 235 && ClientShots.g(c) < 110 && ClientShots.b(c) < 110);
-            int faded = ClientShots.count(shot, c -> ClientShots.r(c) > 150 && ClientShots.r(c) < 210 && ClientShots.g(c) > 80 && ClientShots.g(c) < 125 && ClientShots.b(c) > 80 && ClientShots.b(c) < 125);
+            int red = ClientShots.count(shot, c -> ClientShots.r(c) > 205 && ClientShots.g(c) < 125 && ClientShots.b(c) < 120 && ClientShots.r(c) - ClientShots.g(c) > 90);
+            int faded = ClientShots.count(shot, c -> ClientShots.r(c) > 140 && ClientShots.r(c) < 200 && ClientShots.g(c) > 85 && ClientShots.g(c) < 130 && ClientShots.b(c) > 85 && ClientShots.b(c) < 130);
             int amber = ClientShots.count(shot, c -> ClientShots.r(c) > 235 && ClientShots.g(c) > 150 && ClientShots.g(c) < 200 && ClientShots.b(c) < 90);
             LOG.info("[ghostpath] freeze drawing: red pixels {}, faded {}, amber {}", red, faded, amber);
             if (red < 40 || faded < 40 || amber < 20) {

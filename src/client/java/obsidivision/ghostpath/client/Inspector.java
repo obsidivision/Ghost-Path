@@ -85,7 +85,15 @@ public final class Inspector {
     public record RealData(int hoveredId, long serverTick, EntityInspector.Stack stack) {
     }
 
+    /** A hovered point of a saved path ({@code line} indexes the saved path's lines). Saved points cannot be pinned. */
+    public record SavedHover(obsidivision.ghostpath.saved.SavedPath saved, int line, int point, double along) {
+        PathSnapshot.Line path() {
+            return this.saved.lines().get(this.line);
+        }
+    }
+
     private static @Nullable GhostHover hoverGhost;
+    private static volatile @Nullable SavedHover hoverSaved;
     private static @Nullable TailHover hoverTail;
     private static @Nullable RealHover hoverReal;
     /** Toggle mode ({@code /path inspect toggle}): whether the inspect key is switched on. */
@@ -109,6 +117,10 @@ public final class Inspector {
         Minecraft mc = Minecraft.getInstance();
         boolean on = PathSettings.inspectToggle ? toggledOn : GhostPathClient.INSPECT.isDown();
         return on && PathSettings.showPaths && mc.gui.screen() == null && mc.level != null;
+    }
+
+    public static @Nullable SavedHover hoveredSaved() {
+        return hoverSaved;
     }
 
     public static @Nullable GhostHover hoveredGhost() {
@@ -160,6 +172,7 @@ public final class Inspector {
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         hoverGhost = null;
+        hoverSaved = null;
         hoverReal = null;
         hoverTail = null;
         PathSnapshot s = PathStore.latest();
@@ -227,7 +240,23 @@ public final class Inspector {
                 realId = e.getId();
             }
         }
-        if (tail != null && (ghost == null || tail.along() < ghost.along()) && (realId < 0 || tail.along() <= realDist)) {
+        // saved paths (session D): from their stored data, in their own dimension
+        Picker.Hit savedHit = null;
+        obsidivision.ghostpath.saved.SavedPath savedPath = null;
+        if (PathSettings.showPaths) {
+            String dim = level.dimension().identifier().toString();
+            for (obsidivision.ghostpath.saved.SavedPath sp : obsidivision.ghostpath.saved.SavedStore.inDimension(obsidivision.ghostpath.saved.SavedStore.visible(), dim)) {
+                Picker.Hit h = Picker.pick(sp.asSnapshot(), origin, dir, max, l -> PathRenderer.lift(l.kind()));
+                if (h != null && (savedHit == null || h.along() < savedHit.along())) {
+                    savedHit = h;
+                    savedPath = sp;
+                }
+            }
+        }
+        double nearestOther = Math.min(ghost == null ? Double.MAX_VALUE : ghost.along(), Math.min(tail == null ? Double.MAX_VALUE : tail.along(), realId < 0 ? Double.MAX_VALUE : realDist));
+        if (savedHit != null && savedHit.along() < nearestOther) {
+            hoverSaved = new SavedHover(savedPath, savedHit.line(), savedHit.point(), savedHit.along());
+        } else if (tail != null && (ghost == null || tail.along() < ghost.along()) && (realId < 0 || tail.along() <= realDist)) {
             hoverTail = new TailHover(s, tailLine, tailJob, tail.point(), tail.along());
         } else if (ghost != null && (realId < 0 || ghost.along() <= realDist)) {
             hoverGhost = new GhostHover(s, ghost.line(), ghost.point(), ghost.along());
@@ -248,6 +277,12 @@ public final class Inspector {
             int p = hover.point();
             Gizmos.cuboid(boxAt(l, p), GizmoStyle.stroke(PathRenderer.color(l.kind()), 3.0F));
             Gizmos.point(pointAt(l, p), PIN_COLOR, 14.0F);
+        }
+        SavedHover sh = hoverSaved;
+        if (sh != null) {
+            PathSnapshot.Line l = sh.path();
+            Gizmos.cuboid(boxAt(l, sh.point()), GizmoStyle.stroke(PathRenderer.color(l.kind()), 3.0F));
+            Gizmos.point(pointAt(l, sh.point()), PIN_COLOR, 14.0F);
         }
         TailHover th = hoverTail;
         if (th != null) {
@@ -396,7 +431,7 @@ public final class Inspector {
         lastHoverPanel = hover;
         if (!hover.isEmpty() && !(ghost != null && PINS.contains(pinOf(ghost)))) { // a pinned point is shown by its pin
             panelsDrawn++;
-            int color = ghost != null ? PathRenderer.color(ghost.path().kind()) : tail != null ? PathRenderer.color(tail.snapshot().lines().get(tail.line()).kind()) : Style.REAL_COLOR;
+            int color = hoverSaved != null ? PathRenderer.color(hoverSaved.path().kind()) : ghost != null ? PathRenderer.color(ghost.path().kind()) : tail != null ? PathRenderer.color(tail.snapshot().lines().get(tail.line()).kind()) : Style.REAL_COLOR;
             Measured ms = measure(font, hover);
             PanelLayout.Rect r = PanelLayout.beside(g.guiWidth(), g.guiHeight(), g.guiWidth() / 2, g.guiHeight() / 2, ms.w(), ms.h(), 14, 2); // flips to the left at the right edge
             panel(g, font, ms, r.x(), r.y(), color);
@@ -420,6 +455,12 @@ public final class Inspector {
     }
 
     private static List<String> hoverPanel(@Nullable GhostHover h) {
+        SavedHover sv = hoverSaved;
+        if (sv != null) {
+            List<String> lines = new ArrayList<>(PanelText.ghost(sv.path(), sv.point(), 0, "saved"));
+            lines.add(1, "saved: " + sv.saved().name() + ", " + obsidivision.ghostpath.command.PathCommand.formatDate(sv.saved().date()));
+            return lines;
+        }
         if (h != null) {
             return PanelText.ghost(h.path(), h.point(), memberCursor, h.snapshot().source());
         }

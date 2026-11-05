@@ -66,9 +66,12 @@ public final class PathSettings {
         return s.equals("default") || s.equals("soft") || s.equals("contrast");
     }
 
+    /** Multiplies the animation time; only the client test raises it, so it can catch the morph while it runs. */
+    public static volatile double animationTestScale = 1.0;
+
     /** Seconds the morph from the old to the new prediction lasts; 0 = no animation. */
     public static double animationSeconds() {
-        return obsidivision.ghostpath.style.Style.current().animationFor(animation);
+        return obsidivision.ghostpath.style.Style.current().animationFor(animation) * animationTestScale;
     }
 
     private PathSettings() {

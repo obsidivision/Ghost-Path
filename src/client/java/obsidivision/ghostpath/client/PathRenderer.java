@@ -33,6 +33,8 @@ public final class PathRenderer {
     /** The frame drawn by the last animated draw (null: the snapshot itself), for the client test. */
     public static volatile PathMorph.@Nullable Frame lastFrame;
     public static volatile boolean lastMorphing;
+    /** Shown by the HUD when the segment cap cut paths while saved paths are drawn. */
+    public static volatile String capNote = "";
 
     /** A cap on the segments drawn in one frame (a path of 6000 ticks, times many paths, would cost more than it shows). */
     private static final int MAX_SEGMENTS = 30_000;
@@ -96,6 +98,7 @@ public final class PathRenderer {
 
     private static void draw() {
         Labels.begin();
+        capNote = "";
         if (!PathSettings.showPaths) {
             return;
         }
@@ -137,6 +140,8 @@ public final class PathRenderer {
             }
         }
         lastSegments = MAX_SEGMENTS - budget[0];
+        capNote = budget[0] <= 0 && !obsidivision.ghostpath.saved.SavedStore.inDimension(obsidivision.ghostpath.saved.SavedStore.visible(), dim).isEmpty()
+            ? "Segment cap (" + MAX_SEGMENTS + ") reached: some paths are cut, saved ones first" : "";
     }
 
     /** One path while a morph runs: its polyline (dots at the interval, the end dot at the last drawn point) and its labels, each with its alpha. */

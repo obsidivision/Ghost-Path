@@ -58,6 +58,23 @@ A chunk next to the loaded area can be loaded without ticking entities (a "lazy"
 - `/path inspect hold` (default) or `/path inspect toggle` chooses whether V works while held or switches on and off each press.
 - Arrows that were still flying when the recording stopped are continued on your computer and drawn lighter, labelled `continued`. You can point at those too. They are an estimate made by your client, not the server's run.
 
+### Saved paths
+
+`/path save <name>` keeps the current prediction (every path per tick as exact doubles, ×N counts, end reasons, freeze and frozen marks, the client's continuation points, plus the machine's trigger, dimension, tick count, game time and date). Names are `a-z 0-9 _ -`, 1 to 32 characters; `/path save <name> replace` overwrites. A saved path is a **snapshot: it never reruns**; it is drawn lighter than the live prediction with `[name]` on its labels, only in its own dimension, and can be hovered (box and panel with a `saved: <name>, <date>` line; saved points cannot be pinned). Key G and `/path show off` hide saved paths too. A new save is shown.
+
+- `/path saved list [archived]`, `/path saved show <name>`, `/path saved hide <name|all>` (shown or hidden is saved too)
+- `/path saved archive <name>`, `/path saved unarchive <name>` (comes back hidden), `/path saved delete <name>` then `/path saved delete <name> confirm` within 30 seconds
+- Files: `<world>/ghostpath/saved/<name>.nbt` and `.../saved/archive/<name>.nbt` (compressed NBT with a format version, written through a temp file and renamed). A file that cannot be read (unknown version, broken) is skipped with a chat warning (on joining the world and in `list`) and never deleted.
+- No import or export between worlds. Live paths and saved paths share the 30000 segment cap; saved ones are cut first and the HUD says so.
+
+### Animation
+
+When a rerun changes the prediction the lines morph from the old to the new in about 0.4 s (ease in and out, real time, so it plays while the game is paused). Paths are matched by type and chain entity index; longer paths draw on, shorter ones retract, unmatched old ones fade out, new ones fade in. A second rerun during a morph starts from what is drawn. It is only a view: hover, pins and the inspector use the final data. Skipped above 500 paths, when the segment cap would be hit, and for recordings or other machines. `/path animation on|off|fast` (fast = 0.15 s), saved in `config/ghostpath.json` (`animation`).
+
+### Look
+
+`/path style default|soft|contrast` (saved in the config as `style`). Every colour, width, size, alpha and timing is in the `Style` class (three presets); change a number there to change the look. Labels are drawn in the HUD as dark pills with a marker for the end reason; overlapping labels show the nearest and fade the others, far ones fade out. Panels have sections (entity, position, velocity, state, chunk) with aligned decimal points and stay on screen. Messages above the hotbar fade in and out. Chat lines start with `Ghost Path » ` (info, success, warning, error colours, numbers highlighted).
+
 ### Commands
 
 | Command | What it does |

@@ -12,7 +12,8 @@
       "obsidivision.ghostpath.test.InspectorGameTest",
       "obsidivision.ghostpath.test.ClientDuperGameTest",
       "obsidivision.ghostpath.test.FreezeDrawGameTest",
-      "obsidivision.ghostpath.test.AreaGameTest"
+      "obsidivision.ghostpath.test.AreaGameTest",
+      "obsidivision.ghostpath.test.SavedAnimClientGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",

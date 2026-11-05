@@ -24,6 +24,16 @@ final class Toasts {
     }
 
     static void hud(GuiGraphicsExtractor g) {
+        String cap = PathRenderer.capNote;
+        if (!cap.isEmpty()) {
+            Style c = Style.current();
+            var f = Minecraft.getInstance().font;
+            int w = f.width(cap) + 2 * c.labelPad() + 8;
+            int x = (g.guiWidth() - w) / 2;
+            g.fill(x, 4, x + w, 4 + f.lineHeight + 2 * c.labelPad() + 2, c.toastBackground());
+            g.fill(x, 4, x + 2, 4 + f.lineHeight + 2 * c.labelPad() + 2, Style.FREEZE_COLOR);
+            g.text(f, cap, x + 6, 5 + c.labelPad(), c.panelHeader(), false);
+        }
         if (text.isEmpty()) {
             return;
         }
