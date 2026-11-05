@@ -50,6 +50,7 @@
     "LevelTicksAccessor",
     "LevelTicksMixin",
     "LevelWeatherAccessor",
+    "LootContextBuilderMixin",
     "LivingEntityAccessor",
     "MinecraftServerLookupMixin",
     "MinecraftServerSaveMixin",

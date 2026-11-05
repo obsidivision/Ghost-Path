@@ -150,6 +150,27 @@ public final class CauseTracker {
         return t != null && t.inChain(level) ? t.chainRandom : vanilla;
     }
 
+    /**
+     * The random of a loot roll during chain work (ruling after the follow-up, item 5). 26.2 {@code LootContext.Builder.create}
+     * (:138-143) takes the builder's own random if it has one (a seeded chest), else the server's per-table
+     * {@code RandomSequences} stream ({@code server.getRandomSequence(key)}, saved with the world and <b>shared by the real level and
+     * every ghost</b>), else the level's random. During chain work this returns a stream of the chain instead: for a table with a key
+     * one of its own, derived from the chain seed and the key (so the rolls of one table repeat in order whatever else the chain
+     * draws in between, and the world's sequence is not advanced by a recording or a rerun), for no key the chain stream.
+     */
+    public static RandomSource lootRandomFor(Level level, net.minecraft.resources.@Nullable Identifier key, RandomSource vanilla) {
+        CauseTracker t = active;
+        if (t == null || !t.inChain(level)) {
+            return vanilla;
+        }
+        if (key == null) {
+            return t.chainRandom;
+        }
+        return t.lootRandoms.computeIfAbsent(key.toString(), k -> RandomSource.create(t.seed ^ (k.hashCode() * 0x9E3779B97F4A7C15L)));
+    }
+
+    private final Map<String, RandomSource> lootRandoms = new java.util.HashMap<>();
+    private final long seed;
     private final ServerLevel level;
     private final Thread thread;
     private final long startTime;
@@ -211,6 +232,7 @@ public final class CauseTracker {
         this.level = level;
         this.thread = Thread.currentThread();
         this.startTime = level.getGameTime();
+        this.seed = seed;
         this.chainRandom = RandomSource.create(seed);
     }
 
