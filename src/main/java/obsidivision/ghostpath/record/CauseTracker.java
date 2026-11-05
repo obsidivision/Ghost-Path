@@ -744,6 +744,39 @@ public final class CauseTracker {
 
     // ---- hooks: entities ----
 
+    /** The text of the note when a chain ender pearl belongs to a player (see {@link #notSimulated()}). */
+    public static final String PLAYER_PEARL = "player-owned pearl: chunk loading not simulated";
+
+    /** Things in this run the ghost cannot imitate, once each, as text (summary and rerun line). */
+    private final Set<String> notSimulated = new java.util.LinkedHashSet<>();
+
+    public List<String> notSimulated() {
+        return List.copyOf(this.notSimulated);
+    }
+
+    /**
+     * 26.2 {@code ThrownEnderpearl.tick} (:155-182): a pearl whose owner is a {@code ServerPlayer} calls
+     * {@code registerAndUpdateEnderPearlTicket} (ServerPlayer.java:2237-2246) every 40 ticks and whenever it enters another chunk: a
+     * ticket {@code TicketType.ENDER_PEARL} (radius 2, 40 ticks) that keeps the chunks around it loaded and ticking. A pearl with another
+     * owner or none places nothing (the machine case, which the ghost does follow). The ghost has no players, so the owner is not found
+     * there, and the chunks the ticket would load are not in its copy: not simulated. The owner counts as a player if it is found as one
+     * in this level or its UUID belongs to an online player (the ghost's pearl has the saved owner UUID but no owner entity).
+     */
+    private boolean ownedByAPlayer(net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl pearl) {
+        if (pearl.getOwner() instanceof net.minecraft.server.level.ServerPlayer) {
+            return true;
+        }
+        var ref = ((obsidivision.ghostpath.mixin.GhostProjectileAccessor) pearl).ghostpath$owner();
+        var server = pearl.level().getServer();
+        return ref != null && server != null && server.getPlayerList().getPlayer(ref.getUUID()) != null;
+    }
+
+    private void notePearl(Entity entity) {
+        if (entity instanceof net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl pearl && this.ownedByAPlayer(pearl)) {
+            this.notSimulated.add(PLAYER_PEARL);
+        }
+    }
+
     /** Chain work spawned, moved, pushed or hurt {@code entity}. */
     public void onEntityTouched(Entity entity, String why) {
         if (this.inChain(entity.level())) {
@@ -759,6 +792,7 @@ public final class CauseTracker {
         int index = this.nextEntityIndex++;
         this.chainEntities.put(entity, index);
         this.everTagged.add(entity);
+        this.notePearl(entity);
         // no position: an entity is often tagged inside its constructor, before its position is set
         this.log(ChainEvent.Kind.ENTITY_TAGGED, null, "#" + index + " " + EntityType.getKey(entity.getType()) + " " + why);
     }
@@ -766,6 +800,7 @@ public final class CauseTracker {
     /** After {@code ServerLevel.addEntity} accepted {@code entity} (the call that tags it comes first). */
     public void onEntityAdded(Entity entity) {
         if (this.chainEntities.containsKey(entity)) {
+            this.notePearl(entity); // tagged in its constructor, before the owner was set
             this.addedChainEntities.add(entity);
             if (this.traceEntities) {
                 this.addFlightPoint(entity, this.chainEntities.get(entity)); // where it starts, before its first tick

@@ -38,7 +38,8 @@
       "obsidivision.ghostpath.test.LazyCoreTest",
       "obsidivision.ghostpath.test.GhostDiskEntitiesTest",
       "obsidivision.ghostpath.test.RerunTriggersTest",
-      "obsidivision.ghostpath.test.TriggersTest"
+      "obsidivision.ghostpath.test.TriggersTest",
+      "obsidivision.ghostpath.test.LongMachineTest"
     ]
   },
   "depends": {

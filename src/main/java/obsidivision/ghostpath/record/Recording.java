@@ -49,6 +49,7 @@ import net.minecraft.world.phys.AABB;
  * @param flightPoints    every chain entity's position per tick, as numbers (step 5)
  * @param flightNotes     hits and removals of chain entities (step 5)
  * @param liveProjectiles chain projectiles still flying when the recording ended (tick limit), saved for the client's continuation (step 5)
+ * @param notSimulated   things the ghost cannot imitate, as text ("player-owned pearl: chunk loading not simulated")
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -88,7 +89,8 @@ public record Recording(
     net.minecraft.world.level.block.state.BlockState triggerStateAtStart,
     List<CauseTracker.FlightPoint> flightPoints,
     List<CauseTracker.FlightNote> flightNotes,
-    List<CauseTracker.LiveEntity> liveProjectiles
+    List<CauseTracker.LiveEntity> liveProjectiles,
+    List<String> notSimulated
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
@@ -126,7 +128,7 @@ public record Recording(
             undo.sharedRestored(), undo.nonChainBlocksLeft(), undo.nonChainEntitiesLeft(),
             tracker.notFollowed().stream().map(ChainEvent::toString).toList(),
             clocksAtStart, List.copyOf(tracker.entityTrace()), Map.copyOf(tracker.readFirstTicks()), triggerStateAtStart,
-            List.copyOf(tracker.flightPoints()), List.copyOf(tracker.flightNotes()), List.copyOf(liveProjectiles));
+            List.copyOf(tracker.flightPoints()), List.copyOf(tracker.flightNotes()), List.copyOf(liveProjectiles), tracker.notSimulated());
     }
 
     /** Block positions read or written: the footprint without entity areas. */
@@ -159,6 +161,9 @@ public record Recording(
         out.add("Weather: " + this.weatherAtStart + " at start" + (this.weatherAtEnd.toString().equals(this.weatherAtStart.toString()) ? "" : ", " + this.weatherAtEnd + " at end"));
         if (this.unseededDrawsInexact > 0) {
             out.add("Inexact: a mob (its AI, or its own random) drew unseeded numbers, so the result may not repeat exactly");
+        }
+        if (!this.notSimulated.isEmpty()) {
+            out.add("Not simulated: " + String.join("; ", this.notSimulated));
         }
         if (!this.notFollowed.isEmpty()) {
             // they count as gone for pending(), but the summary names each one (ruling, gaps 2, 7, 8)

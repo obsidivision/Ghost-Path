@@ -282,12 +282,50 @@ public final class GhostCopy {
             return out.toString();
         }
 
-        /** Copies the contents. The real chunks must still be loaded (FULL, with entities), else it throws. */
+        /** The chunks whose sections are copied from the real level (the disk chunks are not), and how far {@link #copySome} got. */
+        private List<ChunkPos> toCopy;
+        private int copiedChunks;
+        private int copiedSections;
+
+        /**
+         * The first, spreadable part of the copy (long machines): copies the sections, heightmaps and light of the next chunks until
+         * {@code deadlineNanos} ({@code System.nanoTime()}) has passed, at least one chunk per call. True when every chunk is done. These
+         * parts only depend on the blocks, so they may come from different server ticks; a block change at the footprint cancels the
+         * run (the live watch), one elsewhere is the gap every spread rerun has. A real chunk that is no longer loaded throws.
+         * {@link #finish} does the rest (block entities, ticks, block events, entities, weather) in one go, at one moment.
+         */
+        public boolean copySome(long deadlineNanos) {
+            if (!this.started) {
+                throw new IllegalStateException("ghost copy: copySome() before poll() reported ready");
+            }
+            if (this.toCopy == null) {
+                if (CauseTracker.active() != null) {
+                    throw new IllegalStateException("ghost copy during a recording");
+                }
+                this.toCopy = this.chunks.stream().filter(c -> !this.disk.contains(c.pack())).toList();
+            }
+            while (this.copiedChunks < this.toCopy.size()) {
+                checkRealLoaded(this.real, this.toCopy.subList(this.copiedChunks, this.copiedChunks + 1));
+                this.copiedSections += copyChunk(this.real, this.ghost, this.toCopy.get(this.copiedChunks++));
+                if (System.nanoTime() >= deadlineNanos) {
+                    break;
+                }
+            }
+            return this.copiedChunks >= this.toCopy.size();
+        }
+
+        /** Chunks whose sections are copied so far (for the tests and the chat line). */
+        public int copiedChunks() {
+            return this.copiedChunks;
+        }
+
+        /** Copies the contents (what {@link #copySome} did not do yet, then the rest in one go). The real chunks must still be loaded (FULL, with entities), else it throws. */
         public Report finish() {
             if (!this.started) {
                 throw new IllegalStateException("ghost copy: finish() before poll() reported ready");
             }
-            return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start, this.disk);
+            this.copySome(Long.MAX_VALUE);
+            return copyContents(this.real, this.ghost, this.chunks, this.levels, this.start, this.disk, this.copiedSections);
         }
 
         /**
@@ -472,7 +510,7 @@ public final class GhostCopy {
         }
     }
 
-    private static Report copyContents(ServerLevel real, GhostLevel ghost, List<ChunkPos> allChunks, Map<Long, int[]> levels, Start start, Set<Long> disk) {
+    private static Report copyContents(ServerLevel real, GhostLevel ghost, List<ChunkPos> allChunks, Map<Long, int[]> levels, Start start, Set<Long> disk, int sections) {
         List<ChunkPos> chunks = allChunks.stream().filter(c -> !disk.contains(c.pack())).toList();
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
@@ -485,10 +523,6 @@ public final class GhostCopy {
         ghost.ghostData().setGameTime(gameTime);
         ghost.setClock(start.clocks() != null ? start.clocks() : real.clockManager().packState());
 
-        int sections = 0;
-        for (ChunkPos c : chunks) {
-            sections += copyChunk(real, ghost, c);
-        }
         ghost.flushLight();
         int blockEntities = copyBlockEntities(real, ghost, chunks, shift);
         BoundingBox box = new BoundingBox(allChunks.getFirst().getMinBlockX(), real.getMinY(), allChunks.getFirst().getMinBlockZ(),

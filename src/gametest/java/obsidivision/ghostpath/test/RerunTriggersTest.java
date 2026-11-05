@@ -119,7 +119,7 @@ public class RerunTriggersTest {
             r.events(), r.writes(), Map.of(), Set.of(), Set.of(), r.tntSpawned(), r.unseededDrawsNotAllowed(), r.unseededDrawsAllowed(), r.unseededDrawsInexact(),
             r.lateBlockEntities(), r.ticksNotRestored(), r.weatherAtStart(), r.weatherAtEnd(), r.chunksReloaded(), r.entitiesNotRestored(), r.itemDriftTicks(),
             r.sharedRestored(), r.nonChainBlocksLeft(), r.nonChainEntitiesLeft(), r.notFollowed(), r.clocksAtStart(), r.entityTrace(), Map.of(), r.triggerStateAtStart(),
-            r.flightPoints(), r.flightNotes(), r.liveProjectiles());
+            r.flightPoints(), r.flightNotes(), r.liveProjectiles(), r.notSimulated());
     }
 
     static void settled(GameTestHelper helper, Watched w, Runnable then) {

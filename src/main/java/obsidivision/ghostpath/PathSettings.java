@@ -9,7 +9,7 @@ public final class PathSettings {
     /** {@code /path limit <ticks>}: the most ticks a recording may run. */
     public static volatile int tickLimit = DEFAULT_TICK_LIMIT;
 
-    /** Live rerun (step 4): server-thread time per server tick a rerun in the ghost may use (at least one ghost tick runs anyway). */
+    /** Live rerun (step 4): server-thread time per server tick a rerun in the ghost may use (at least one ghost tick runs anyway; the copy of the chunks uses the same budget, at least one chunk per tick; 0 means one unit per server tick). */
     public static volatile int rerunBudgetMs = 10;
 
     /**

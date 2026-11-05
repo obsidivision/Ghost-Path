@@ -158,7 +158,7 @@ public final class LiveWatch {
             if (p != null) {
                 out.add("   last rerun: " + p.ticks() + " ticks, " + p.tntSpawned() + " TNT" + (p.tntSpawnTicks().isEmpty() ? "" : " (spawn t+"
                     + p.tntSpawnTicks().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", t+")) + ")")
-                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (ghost created " + p.createMillis() + " ms, copy " + p.copyMillis() + " ms, longest slice "
+                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (ghost created " + p.createMillis() + " ms, copy " + p.copyMillis() + " ms over " + p.copyTicks() + " ticks, longest slice "
                     + p.maxSliceMillis() + " ms, budget " + PathSettings.rerunBudgetMs + " ms)");
             }
         }
@@ -280,7 +280,7 @@ public final class LiveWatch {
             }
             Rerun r = run;
             try {
-                if (r.step(Math.max(1L, PathSettings.rerunBudgetMs) * 1_000_000L)) {
+                if (r.step(Math.max(0L, PathSettings.rerunBudgetMs) * 1_000_000L)) {
                     run = null;
                     finished(server, r);
                 } else {
@@ -396,7 +396,10 @@ public final class LiveWatch {
         if (!p.beyond().isEmpty()) {
             line.append(" (the chain reaches beyond the copied chunks, ").append(p.beyond().size()).append(" chunks not copied: the prediction may be wrong)");
         }
-        line.append(" (ghost created in ").append(p.createMillis()).append(" ms)");
+        line.append(" (ghost created in ").append(p.createMillis()).append(" ms, copied in ").append(p.copyMillis()).append(" ms over ").append(p.copyTicks()).append(p.copyTicks() == 1 ? " tick)" : " ticks)");
+        if (!p.notSimulated().isEmpty()) {
+            line.append(" (").append(String.join("; ", p.notSimulated())).append(")");
+        }
         if (p.triggerNote() != null) {
             line.append(" (").append(p.triggerNote()).append(")");
         }

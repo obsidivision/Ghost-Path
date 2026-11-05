@@ -15,4 +15,8 @@ public interface GhostProjectileAccessor {
 
     @Accessor("leftOwnerChecked")
     void ghostpath$setLeftOwnerChecked(boolean value);
+
+    /** 26.2 Projectile.java:45 {@code protected EntityReference<Entity> owner}: the owner's UUID, also when the owner is not in this level (the ghost has no players). */
+    @Accessor("owner")
+    net.minecraft.world.entity.@org.jspecify.annotations.Nullable EntityReference<net.minecraft.world.entity.Entity> ghostpath$owner();
 }
