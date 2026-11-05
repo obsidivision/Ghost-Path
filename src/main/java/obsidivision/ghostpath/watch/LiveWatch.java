@@ -97,6 +97,30 @@ public final class LiveWatch {
         WATCHES.remove(w);
     }
 
+    /**
+     * {@code /path rerun [x y z]}: queues a rerun of the watch with that trigger (all watches when {@code trigger} is null) now: no
+     * quiet period, but it still waits for the real machine to be idle and its chunks to be loaded, and for any run in progress
+     * (one ghost at a time). Returns how many watches were queued.
+     */
+    public static int rerun(@Nullable BlockPos trigger) {
+        int n = 0;
+        for (Watched w : WATCHES) {
+            if (trigger == null || w.trigger().equals(trigger)) {
+                if (run != null && run.watch == w) {
+                    continue; // already running
+                }
+                w.dirty = true;
+                w.forced = true;
+                w.lastWhat = "forced by /path rerun";
+                w.lastChangePos = null;
+                w.lastChangeLabel = "forced";
+                w.status = "rerun queued";
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** Stops every watch. Returns how many there were. */
     public static int stopAll() {
         int n = WATCHES.size();
@@ -152,15 +176,31 @@ public final class LiveWatch {
      * A real block state changed ({@code LevelChunk.setBlockState} returned a changed state). Cheap when nothing is watched.
      * Ignored while a recording runs: its chain and its restore write the footprint.
      */
-    public static void onBlockChanged(ServerLevel level, BlockPos pos) {
-        if (ignoring()) {
+    public static void onBlockChanged(ServerLevel level, BlockPos pos, net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState now) {
+        if (ignoring() || old.isAir() && now.isAir()) { // air to air (cave air, void air) changes nothing a machine can see
+            return;
+        }
+        // a chunk that is not (yet) loaded as a full chunk is not changed by a player or a machine: its writes are loading work
+        if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null) {
             return;
         }
         for (Watched w : WATCHES) {
-            if (level.dimension().equals(w.recording().dimension()) && w.footprint.hit(pos)) {
-                markChanged(w, "block at " + pos.toShortString() + " is now " + level.getBlockState(pos));
+            if (!level.dimension().equals(w.recording().dimension())) {
+                continue;
+            }
+            Footprint.Cause cause = w.footprint.cause(pos, PathSettings.watchMargin);
+            if (cause != null) {
+                String what = label(old, now);
+                markChanged(w, "block at " + pos.toShortString() + " is now " + now + (cause == Footprint.Cause.FOOTPRINT ? "" : cause == Footprint.Cause.NEIGHBOR
+                    ? " (next to a block the machine wrote)" : " (within " + PathSettings.watchMargin + " of a block the machine wrote)"), pos.immutable(), what);
             }
         }
+    }
+
+    /** "piston placed", "stone broken", "lever changed": the short label of a block change. */
+    static String label(net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState now) {
+        String name = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey((now.isAir() ? old : now).getBlock()).getPath();
+        return name + (old.isAir() ? " placed" : now.isAir() ? " broken" : " changed");
     }
 
     /**
@@ -186,7 +226,13 @@ public final class LiveWatch {
     }
 
     private static void markChanged(Watched w, String what) {
+        markChanged(w, what, null, what);
+    }
+
+    private static void markChanged(Watched w, String what, @Nullable BlockPos pos, String label) {
         w.lastWhat = what;
+        w.lastChangePos = pos;
+        w.lastChangeLabel = label;
         w.dirty = true;
         w.lastChange = serverTick;
         w.changes++;
@@ -255,7 +301,7 @@ public final class LiveWatch {
                 continue;
             }
             long quiet = serverTick - w.lastChange;
-            if (quiet < QUIET_TICKS) {
+            if (quiet < QUIET_TICKS && !w.forced) {
                 w.status = "changed, waiting for quiet (" + quiet + "/" + QUIET_TICKS + " ticks)";
                 continue;
             }
@@ -299,6 +345,10 @@ public final class LiveWatch {
         }
         try {
             run = new Rerun(w, level, rect[0], rect[1], widened);
+            if (!widened) {
+                w.trigger = new Watched.Change(w.lastChangePos, w.forced ? "rerun: forced" : "rerun: " + w.lastChangeLabel, serverTick);
+            }
+            w.forced = false;
             w.dirty = false;
             w.status = "rerunning: " + run.phase();
         } catch (IOException | RuntimeException e) {

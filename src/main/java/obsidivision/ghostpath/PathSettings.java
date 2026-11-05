@@ -20,6 +20,12 @@ public final class PathSettings {
     public static volatile boolean watchAfterMachine = true;
 
     /**
+     * {@code /path watch margin <n>}: a real block change within this many blocks (each axis) of a block the chain wrote counts as a
+     * change of the watched machine, besides the footprint and the neighbours of written blocks (which always count). 0 = off.
+     */
+    public static volatile int watchMargin = 2;
+
+    /**
      * Flight preview (step 5), read by the client in singleplayer (same JVM as the built-in server): whether the paths are
      * drawn ({@code /path show on|off}, the toggle key).
      */

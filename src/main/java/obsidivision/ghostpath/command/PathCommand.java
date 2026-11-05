@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}, {@code /path watch margin <n>}, {@code /path rerun [x y z]}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -45,8 +45,15 @@ public final class PathCommand {
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
+            .then(Commands.literal("rerun")
+                .executes(ctx -> rerun(ctx.getSource(), null))
+                .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                    .executes(ctx -> rerun(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos")))))
             .then(Commands.literal("watch")
                 .then(Commands.literal("list").executes(ctx -> watchList(ctx.getSource())))
+                .then(Commands.literal("margin")
+                    .then(Commands.argument("n", IntegerArgumentType.integer(0, obsidivision.ghostpath.watch.Footprint.MAX_MARGIN))
+                        .executes(ctx -> watchMargin(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "n")))))
                 .then(Commands.literal("stop")
                     .executes(ctx -> watchStop(ctx.getSource(), null))
                     .then(Commands.argument("pos", BlockPosArgument.blockPos())
@@ -116,6 +123,20 @@ public final class PathCommand {
         PathSettings.tickLimit = ticks;
         source.sendSuccess(() -> Component.literal("Recording tick limit: " + ticks), false);
         return ticks;
+    }
+
+    private static int watchMargin(CommandSourceStack source, int n) {
+        PathSettings.watchMargin = n;
+        source.sendSuccess(() -> Component.literal("Watch margin: " + n + (n == 0 ? " (off: only the footprint and the neighbours of blocks the machine wrote count)"
+            : " blocks around every block the machine wrote (plus the footprint and the neighbours of written blocks)")), false);
+        return n;
+    }
+
+    private static int rerun(CommandSourceStack source, BlockPos pos) {
+        int n = LiveWatch.rerun(pos);
+        source.sendSuccess(() -> Component.literal(n == 0 ? (LiveWatch.watches().isEmpty() ? "No machine is watched." : "No such watch, or it is running now.")
+            : "Rerun queued for " + n + " watch" + (n == 1 ? "" : "es") + " (starts when the real machine is idle and one ghost is free)."), false);
+        return n;
     }
 
     private static int watchList(CommandSourceStack source) {

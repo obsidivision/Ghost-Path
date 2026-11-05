@@ -284,7 +284,7 @@ public class LiveRerunTest {
             for (int x = -6; x <= 20 && outside == null; x += 2) {
                 for (int z = -6; z <= 14 && outside == null; z += 2) {
                     BlockPos q = helper.absolutePos(new BlockPos(x, y, z));
-                    if (!watch.footprint().hit(q) && level.getBlockState(q).isAir() && level.isLoaded(q)) {
+                    if (watch.footprint().cause(q, PathSettings.watchMargin) == null && level.getBlockState(q).isAir() && level.isLoaded(q)) {
                         outside = q;
                     }
                 }

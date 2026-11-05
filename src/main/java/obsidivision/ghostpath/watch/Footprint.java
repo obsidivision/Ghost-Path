@@ -23,12 +23,43 @@ public final class Footprint {
     private final Set<BlockPos> positions;
     private final Set<Column> columns;
     private final Set<AABB> areas;
+    /** The positions chain work wrote (changed, moved or destroyed): the "machine blocks" the neighbour rule and the margin are measured from. */
+    private final Set<BlockPos> writes;
+    private final LongOpenHashSet writeKeys = new LongOpenHashSet();
+    /** Chunks within one chunk of a written position (the margin is at most {@link #MAX_MARGIN} blocks, so one chunk is enough). */
+    private final LongOpenHashSet writeNearChunks = new LongOpenHashSet();
     private final LongOpenHashSet positionKeys = new LongOpenHashSet();
     private final LongOpenHashSet columnKeys = new LongOpenHashSet();
     private final Long2ObjectOpenHashMap<List<AABB>> areasByChunk = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet chunks = new LongOpenHashSet();
 
+    /** Largest margin {@code /path watch margin} accepts. */
+    public static final int MAX_MARGIN = 8;
+
+    /** Why a block change counts for a watch (see {@link #cause}). */
+    public enum Cause {
+        /** A position the chain read or wrote, a heightmap column it read, or inside a box it asked for entities. */
+        FOOTPRINT,
+        /** One of the 6 neighbours of a block the chain wrote. */
+        NEIGHBOR,
+        /** Within the margin of a block the chain wrote. */
+        MARGIN
+    }
+
     public Footprint(Collection<BlockPos> positions, Collection<Column> columns, Collection<AABB> areas) {
+        this(positions, columns, areas, List.of());
+    }
+
+    public Footprint(Collection<BlockPos> positions, Collection<Column> columns, Collection<AABB> areas, Collection<BlockPos> writes) {
+        this.writes = Set.copyOf(writes);
+        for (BlockPos w : this.writes) {
+            this.writeKeys.add(w.asLong());
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    this.writeNearChunks.add(ChunkPos.pack((w.getX() >> 4) + dx, (w.getZ() >> 4) + dz));
+                }
+            }
+        }
         this.positions = Set.copyOf(positions);
         this.columns = Set.copyOf(columns);
         this.areas = Set.copyOf(areas);
@@ -56,11 +87,11 @@ public final class Footprint {
     }
 
     public static Footprint of(Recording rec) {
-        return new Footprint(rec.footprint(), rec.heightmapColumns(), rec.entityAreas());
+        return new Footprint(rec.footprint(), rec.heightmapColumns(), rec.entityAreas(), rec.writes());
     }
 
     public static Footprint of(CauseTracker tracker) {
-        return new Footprint(tracker.footprint(), tracker.heightmapColumns(), tracker.entityAreas());
+        return new Footprint(tracker.footprint(), tracker.heightmapColumns(), tracker.entityAreas(), tracker.writes());
     }
 
     private static long columnKey(int x, int z) {
@@ -70,6 +101,11 @@ public final class Footprint {
     /** Block positions read or written. */
     public Set<BlockPos> positions() {
         return this.positions;
+    }
+
+    /** Positions chain work wrote (changed, moved or destroyed). */
+    public Set<BlockPos> writes() {
+        return this.writes;
     }
 
     public Set<Column> columns() {
@@ -108,6 +144,60 @@ public final class Footprint {
             }
         }
         return false;
+    }
+
+    /** Whether {@code pos} is a position chain work wrote. */
+    public boolean isWritten(BlockPos pos) {
+        return this.writeKeys.contains(pos.asLong());
+    }
+
+    /** Whether {@code pos} is one of the 6 neighbours of a position chain work wrote. */
+    public boolean nextToWrite(BlockPos pos) {
+        if (this.writeKeys.isEmpty() || !this.writeNearChunks.contains(ChunkPos.pack(pos.getX() >> 4, pos.getZ() >> 4))) {
+            return false;
+        }
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
+            if (this.writeKeys.contains(m.setWithOffset(pos, d).asLong())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether {@code pos} is within {@code margin} blocks (each axis, so a cube around it) of a position chain work wrote. */
+    public boolean nearWrite(BlockPos pos, int margin) {
+        if (margin <= 0 || this.writeKeys.isEmpty() || !this.writeNearChunks.contains(ChunkPos.pack(pos.getX() >> 4, pos.getZ() >> 4))) {
+            return false;
+        }
+        BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
+        for (int dx = -margin; dx <= margin; dx++) {
+            for (int dy = -margin; dy <= margin; dy++) {
+                for (int dz = -margin; dz <= margin; dz++) {
+                    if ((dx != 0 || dy != 0 || dz != 0) && this.writeKeys.contains(m.set(pos.getX() + dx, pos.getY() + dy, pos.getZ() + dz).asLong())) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Why a real block change at {@code pos} counts, or null if it does not: the footprint ({@link #hit}), the neighbour rule
+     * (next to a block the chain wrote), or the margin (within {@code margin} blocks of one; 0 turns the margin off).
+     */
+    public @org.jspecify.annotations.Nullable Cause cause(BlockPos pos, int margin) {
+        if (this.hit(pos)) {
+            return Cause.FOOTPRINT;
+        }
+        if (this.nextToWrite(pos)) {
+            return Cause.NEIGHBOR;
+        }
+        if (this.nearWrite(pos, margin)) {
+            return Cause.MARGIN;
+        }
+        return null;
     }
 
     /**
