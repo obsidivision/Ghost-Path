@@ -50,7 +50,7 @@ public class MachineCommandTest {
 
         @Override
         public void sendSystemMessage(Component message) {
-            this.lines.add(message.getString());
+            this.lines.add(message.getString().startsWith(obsidivision.ghostpath.chat.Chat.PREFIX) ? message.getString().substring(obsidivision.ghostpath.chat.Chat.PREFIX.length()) : message.getString());
         }
 
         @Override
