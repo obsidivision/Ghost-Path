@@ -8,7 +8,7 @@ Ghost Path shows where TNT and projectiles will go before you pull the lever. It
 - **Fabric API 0.161.0+26.2** (or a newer 26.2 build).
 - **Singleplayer** (and a LAN world you host). It is not meant for servers or multiplayer.
 
-Put `ghostpath-0.19.5.jar` and the Fabric API jar in your `mods` folder. Cheats must be on in the world (the commands need operator rights; the owner of a singleplayer world always has them).
+Put `ghostpath-0.1.0.jar` and the Fabric API jar in your `mods` folder. Cheats must be on in the world (the commands need operator rights; the owner of a singleplayer world always has them).
 
 ## How to use it
 
