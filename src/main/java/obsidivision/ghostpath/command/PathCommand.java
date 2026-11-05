@@ -62,6 +62,10 @@ public final class PathCommand {
                     .then(Commands.argument("name", StringArgumentType.word())
                         .executes(ctx -> report(ctx.getSource(), store(ctx.getSource()).delete(StringArgumentType.getString(ctx, "name"), false)))
                         .then(Commands.literal("confirm").executes(ctx -> report(ctx.getSource(), store(ctx.getSource()).delete(StringArgumentType.getString(ctx, "name"), true)))))))
+            .then(Commands.literal("animation")
+                .then(Commands.literal("on").executes(ctx -> animation(ctx.getSource(), "on")))
+                .then(Commands.literal("off").executes(ctx -> animation(ctx.getSource(), "off")))
+                .then(Commands.literal("fast").executes(ctx -> animation(ctx.getSource(), "fast"))))
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
@@ -163,6 +167,14 @@ public final class PathCommand {
         for (String w : SavedStore.of(server).warnings()) {
             player.sendSystemMessage(Component.literal("Ghost Path: saved path " + w));
         }
+    }
+
+    private static int animation(CommandSourceStack source, String mode) {
+        PathSettings.animation = mode;
+        obsidivision.ghostpath.Config.save();
+        source.sendSuccess(() -> Component.literal("Animation " + mode + (mode.equals("off") ? " (a rerun's lines jump to the new prediction)"
+            : " (a rerun's lines morph to the new prediction in " + PathSettings.animationSeconds() + " s)")), false);
+        return 1;
     }
 
     private static int kick(CommandSourceStack source, boolean on) {

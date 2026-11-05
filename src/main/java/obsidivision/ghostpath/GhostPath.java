@@ -35,6 +35,7 @@ public class GhostPath implements ModInitializer {
 
     @Override
     public void onInitialize() {
+        Config.load();
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> PathCommand.register(dispatcher));
         ServerTickEvents.END_SERVER_TICK.register(MachineRecorder::tick);
         ServerTickEvents.END_SERVER_TICK.register(obsidivision.ghostpath.watch.LiveWatch::tick);

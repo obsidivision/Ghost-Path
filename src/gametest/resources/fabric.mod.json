@@ -44,7 +44,8 @@
       "obsidivision.ghostpath.test.LongMachineTest",
       "obsidivision.ghostpath.test.AreaTest",
       "obsidivision.ghostpath.test.LootDropsTest",
-      "obsidivision.ghostpath.test.SavedPathsTest"
+      "obsidivision.ghostpath.test.SavedPathsTest",
+      "obsidivision.ghostpath.test.PathMorphTest"
     ]
   },
   "depends": {

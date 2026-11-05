@@ -53,6 +53,31 @@ public final class PathSettings {
      */
     public static volatile boolean beyondLoaded = true;
 
+    /** {@code /path animation on|off|fast} (saved in the config): how a rerun's new lines come in. */
+    public static volatile String animation = "on";
+    /** Seconds the morph lasts ({@code on}, {@code fast}); 0 for off. */
+    public static final double ANIMATION_SECONDS = 0.4;
+    public static final double ANIMATION_FAST_SECONDS = 0.15;
+    /** {@code /path style default|soft|contrast} (saved in the config). */
+    public static volatile String style = "default";
+
+    public static boolean validAnimation(String s) {
+        return s.equals("on") || s.equals("off") || s.equals("fast");
+    }
+
+    public static boolean validStyle(String s) {
+        return s.equals("default") || s.equals("soft") || s.equals("contrast");
+    }
+
+    /** Seconds the morph from the old to the new prediction lasts; 0 = no animation. */
+    public static double animationSeconds() {
+        return switch (animation) {
+            case "off" -> 0.0;
+            case "fast" -> ANIMATION_FAST_SECONDS;
+            default -> ANIMATION_SECONDS;
+        };
+    }
+
     private PathSettings() {
     }
 }

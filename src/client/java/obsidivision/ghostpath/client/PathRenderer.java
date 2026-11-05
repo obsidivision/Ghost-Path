@@ -7,6 +7,8 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.gizmos.TextGizmo;
 import net.minecraft.world.phys.Vec3;
 import obsidivision.ghostpath.PathSettings;
+import obsidivision.ghostpath.preview.MorphTracker;
+import obsidivision.ghostpath.preview.PathMorph;
 import obsidivision.ghostpath.preview.PathSnapshot;
 import obsidivision.ghostpath.preview.PathStore;
 import obsidivision.ghostpath.record.CauseTracker.FlightKind;
@@ -25,6 +27,11 @@ public final class PathRenderer {
     public static volatile int framesDrawn;
     public static volatile int lastLines;
     public static volatile int lastSegments;
+
+    private static final MorphTracker MORPH = new MorphTracker();
+    /** The frame drawn by the last animated draw (null: the snapshot itself), for the client test. */
+    public static volatile PathMorph.@Nullable Frame lastFrame;
+    public static volatile boolean lastMorphing;
 
     private static final float LINE_WIDTH = 2.0F;
     private static final float DOT_SIZE = 6.0F;
@@ -112,12 +119,22 @@ public final class PathRenderer {
         int[] budget = {MAX_SEGMENTS};
         framesDrawn++;
         lastLines = 0;
+        // the animation is a view: it only decides what is drawn; the snapshot (hover, pins, inspector) is never touched
+        PathMorph.Frame morphed = MORPH.frame(s, System.nanoTime(), PathSettings.animationSeconds(), MAX_SEGMENTS);
+        lastMorphing = morphed != null;
+        lastFrame = morphed;
         if (s != null && dim.equals(s.dimension())) {
             List<PathSnapshot.Line> lines = s.lines();
             lastLines = lines.size();
-            for (int i = 0; i < lines.size(); i++) {
-                Tails.Job job = Tails.job(s, i);
-                drawLine(lines.get(i), job == null ? null : job.copyOut(), null, interval, offset, budget);
+            if (morphed != null) {
+                for (PathMorph.MLine ml : morphed.lines()) {
+                    drawMorphed(ml, interval, offset, budget);
+                }
+            } else {
+                for (int i = 0; i < lines.size(); i++) {
+                    Tails.Job job = Tails.job(s, i);
+                    drawLine(lines.get(i), job == null ? null : job.copyOut(), null, interval, offset, budget);
+                }
             }
         }
         // saved paths (session D): lighter, with their name on the start and end labels; only in their own dimension
@@ -127,6 +144,33 @@ public final class PathRenderer {
             }
         }
         lastSegments = MAX_SEGMENTS - budget[0];
+    }
+
+    /** One path while a morph runs: its polyline (dots at the interval, the end dot at the last drawn point) and its labels, each with its alpha. */
+    private static void drawMorphed(PathMorph.MLine l, int interval, int offset, int[] budget) {
+        int n = l.points();
+        if (n == 0 || l.alpha() <= 0.01) {
+            return;
+        }
+        double up = lift(l.kind());
+        int base = color(l.kind());
+        segments(l.xyz(), n, l.ticks(), up, withAlpha(base, alphaByte(l.alpha())), interval, offset, budget, true, true, n, k -> false);
+        Vec3 start = at(l.xyz(), 0, up);
+        Vec3 end = at(l.xyz(), n - 1, up);
+        for (PathMorph.Lab lab : l.labels()) {
+            if (lab.alpha() <= 0.05) {
+                continue;
+            }
+            int c = withAlpha(base, alphaByte(lab.alpha() * l.alpha()));
+            if (lab.line().count() > 1) {
+                label("×" + lab.line().count(), start.add(0.0, 0.3, 0.0), c);
+            }
+            label(PathSnapshot.endText(lab.line()), end.add(0.0, 0.3, 0.0), c);
+        }
+    }
+
+    static int alphaByte(double a) {
+        return (int) Math.round(Math.max(0.0, Math.min(1.0, a)) * 255.0);
     }
 
     /** Alpha of a saved path's colours (they are drawn lighter than the live prediction). */
