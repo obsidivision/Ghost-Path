@@ -122,7 +122,7 @@ public class LiveRerunTest {
 
         @Override
         public void sendSystemMessage(net.minecraft.network.chat.Component message) {
-            this.lines.add(message.getString());
+            this.lines.add(message.getString().startsWith(obsidivision.ghostpath.chat.Chat.PREFIX) ? message.getString().substring(obsidivision.ghostpath.chat.Chat.PREFIX.length()) : message.getString());
         }
 
         @Override
@@ -253,7 +253,7 @@ public class LiveRerunTest {
                         helper.assertTrue(after < before.getFirst(), "the TNT spawn tick did not move earlier: t+" + before.getFirst() + " -> t+" + after);
                         helper.assertTrue(p.serverTicks() >= 5 && busy[0] >= 5, "the run was not spread over server ticks: " + p.serverTicks() + " / " + busy[0]);
                         helper.assertTrue(p.trace().stream().anyMatch(t -> t.type().equals("minecraft:tnt")), "no TNT state in the prediction");
-                        String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse(null);
+                        String line = chat.lines.stream().filter(l -> l.contains("rerun:")).findFirst().orElse(null);
                         LOG.info("[ghostpath] chat: {}", line);
                         helper.assertTrue(line != null && line.contains(p.ticks() + " ticks, 1 TNT spawned") && line.contains("(ghost created in ") && line.contains(", changed since last: ")
                             && line.contains("TNT #0 spawn t+" + before.getFirst() + " -> t+" + after), "chat line: " + line);
@@ -388,7 +388,7 @@ public class LiveRerunTest {
                                         List<Integer> orig = Prediction.tntSpawnTicks(rec.events(), rec.entityTrace());
                                         helper.assertTrue(watch.reruns() == 1 && watch.cancelled() == 1 && p.tntSpawnTicks().equals(orig),
                                             "reruns " + watch.reruns() + ", cancelled " + watch.cancelled() + ", TNT " + p.tntSpawnTicks() + " (recording " + orig + ")");
-                                        helper.assertTrue(chat.lines.stream().filter(l -> l.startsWith("rerun:")).count() == 1, "chat: " + chat.lines);
+                                        helper.assertTrue(chat.lines.stream().filter(l -> l.contains("rerun:")).count() == 1, "chat: " + chat.lines);
                                         assertNotFired(helper, level);
                                         // /path watch list and stop
                                         Capture out = new Capture();
@@ -460,7 +460,7 @@ public class LiveRerunTest {
                 waitFor(helper, "the rerun", 60000, () -> assertNotFired(helper, level), () -> watch.reruns() >= 1, () -> {
                     try {
                         Prediction p = watch.latest();
-                        String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse("-");
+                        String line = chat.lines.stream().filter(l -> l.contains("rerun:")).findFirst().orElse("-");
                         LOG.info("[ghostpath] widen test: {} ticks, area {}..{}, widenings {}, beyond {}; chat: {}", p.ticks(), p.copiedMin(), p.copiedMax(),
                             watch.widenings(), p.beyond().size(), line);
                         helper.assertTrue(watch.reruns() == 1 && watch.widenings() == 1 && p.widened(), "reruns " + watch.reruns() + ", widenings " + watch.widenings());

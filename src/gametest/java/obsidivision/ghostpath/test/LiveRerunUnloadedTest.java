@@ -126,7 +126,7 @@ public class LiveRerunUnloadedTest {
                 }, () -> watch.reruns() >= 1, () -> {
                     try {
                         Prediction p = watch.latest();
-                        String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse("-");
+                        String line = chat.lines.stream().filter(l -> l.contains("rerun:")).findFirst().orElse("-");
                         LOG.info("[ghostpath] unloaded widen test (beyond-loaded {}): {} ticks, area {}..{}, widenings {}, beyond {}, TNT {}, notTicking {}; chat: {}", beyond,
                             p.ticks(), p.copiedMin(), p.copiedMax(), watch.widenings(), p.beyond().size(), p.tntSpawned(), p.notTicking().size(), line);
                         BlockPos disp = helper.absolutePos(relDisp);

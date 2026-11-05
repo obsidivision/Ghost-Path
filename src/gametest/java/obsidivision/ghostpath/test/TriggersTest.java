@@ -100,7 +100,7 @@ public class TriggersTest {
             LiveRerunTest.waitFor(helper, "the rerun", 60000, () -> helper.assertTrue(level.getBlockState(helper.absolutePos(new BlockPos(10, 2, 1))).is(Blocks.TNT), "the real machine fired"),
                 () -> watch.reruns() > reruns, () -> RerunTriggersTest.guard(helper, () -> {
                     Prediction p = watch.latest();
-                    String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).reduce((a, b) -> b).orElse("(none)");
+                    String line = chat.lines.stream().filter(l -> l.contains("rerun:")).reduce((a, b) -> b).orElse("(none)");
                     LOG.info("[ghostpath] note trigger rerun line: {}", line);
                     helper.assertTrue(line.contains("real note block is note 12; prediction is for note 0 → note 1"), "chat line: " + line);
                     helper.assertTrue(p.events().stream().anyMatch(e -> e.kind() == ChainEvent.Kind.WRITE && abs.equals(e.pos()) && e.detail().contains("note=0") && e.detail().substring(e.detail().indexOf("-> ")).contains("note=1")),

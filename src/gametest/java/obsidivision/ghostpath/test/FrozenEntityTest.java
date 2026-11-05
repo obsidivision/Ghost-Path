@@ -274,8 +274,8 @@ public class FrozenEntityTest {
             level.setChunkForced(b.x(), b.z(), false);
         };
         obsidivision.ghostpath.watch.LiveWatch.rerun(rec.trigger());
-        waitFor(helper, () -> chat.stream().anyMatch(l -> l.startsWith("rerun:")), cleanup, () -> {
-            String first = chat.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElseThrow();
+        waitFor(helper, () -> chat.stream().anyMatch(l -> l.contains("rerun:")), cleanup, () -> {
+            String first = chat.stream().filter(l -> l.contains("rerun:")).findFirst().orElseThrow();
             LOG.info("[ghostpath] frozen: rerun with the recorded levels: {}", first);
             if (first.contains("leave the area where entities tick")) {
                 cleanup.run();
@@ -291,8 +291,8 @@ public class FrozenEntityTest {
             level.setChunkForced(b.x(), b.z(), true);
             waitFor(helper, () -> level.isPositionEntityTicking(new BlockPos(b.getMiddleBlockX(), level.getMinY() + 1, b.getMiddleBlockZ())), cleanup, () -> {
                 obsidivision.ghostpath.watch.LiveWatch.rerun(rec.trigger());
-                waitFor(helper, () -> chat.stream().anyMatch(l -> l.startsWith("rerun:")), cleanup, () -> {
-                    String second = chat.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElseThrow();
+                waitFor(helper, () -> chat.stream().anyMatch(l -> l.contains("rerun:")), cleanup, () -> {
+                    String second = chat.stream().filter(l -> l.contains("rerun:")).findFirst().orElseThrow();
                     LOG.info("[ghostpath] frozen: rerun after B became entity ticking: {}", second);
                     cleanup.run();
                     helper.assertTrue(second.contains("(chunk loading changed since recording: ") && second.contains("chunk " + b.x() + " " + b.z() + ": block ticking -> entity ticking"),

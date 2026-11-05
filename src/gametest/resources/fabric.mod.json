@@ -12,7 +12,8 @@
       "obsidivision.ghostpath.test.InspectorGameTest",
       "obsidivision.ghostpath.test.ClientDuperGameTest",
       "obsidivision.ghostpath.test.FreezeDrawGameTest",
-      "obsidivision.ghostpath.test.AreaGameTest"
+      "obsidivision.ghostpath.test.AreaGameTest",
+      "obsidivision.ghostpath.test.SavedAnimClientGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",
@@ -43,7 +44,10 @@
       "obsidivision.ghostpath.test.TriggersTest",
       "obsidivision.ghostpath.test.LongMachineTest",
       "obsidivision.ghostpath.test.AreaTest",
-      "obsidivision.ghostpath.test.LootDropsTest"
+      "obsidivision.ghostpath.test.LootDropsTest",
+      "obsidivision.ghostpath.test.SavedPathsTest",
+      "obsidivision.ghostpath.test.PathMorphTest",
+      "obsidivision.ghostpath.test.StyleTest"
     ]
   },
   "depends": {

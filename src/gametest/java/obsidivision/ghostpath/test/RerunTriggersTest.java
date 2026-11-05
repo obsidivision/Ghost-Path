@@ -192,7 +192,7 @@ public class RerunTriggersTest {
             helper.setBlock(O2, observerDown());
             helper.assertTrue(w.dirty() && w.changes() == 1, "the observer next to X was not seen (changes " + w.changes() + ")");
             LiveRerunTest.waitFor(helper, "the rerun", 60000, () -> notFired(helper, level, 0), () -> w.reruns() >= 1, () -> guard(helper, () -> {
-                helper.assertTrue(chat.lines.stream().anyMatch(l -> l.startsWith("rerun:")), "no rerun line: " + chat.lines);
+                helper.assertTrue(chat.lines.stream().anyMatch(l -> l.contains("rerun:")), "no rerun line: " + chat.lines);
                 end(helper);
                 helper.succeed();
             }));
@@ -267,7 +267,7 @@ public class RerunTriggersTest {
             Runnable finalCheck = () -> guard(helper, () -> {
                 Prediction p = watch.latest();
                 helper.assertTrue(p != null && watch.reruns() > reruns[0], "no rerun after the last edit");
-                String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).reduce((a, b) -> b).orElse("(none)");
+                String line = chat.lines.stream().filter(l -> l.contains("rerun:")).reduce((a, b) -> b).orElse("(none)");
                 LOG.info("[ghostpath] triggers: last rerun line: {}", line);
                 helper.assertTrue(p.tntSpawned() == 1 && p.tntSpawnTicks().size() == 1, "the rerun lit " + p.tntSpawned() + " TNT: " + p.tntSpawnTicks());
                 helper.assertTrue(wrote(p, helper.absolutePos(T2)) && wrote(p, helper.absolutePos(LANDING)), "P3 did not push the TNT block: head cell " + wrote(p, helper.absolutePos(T2)) + " landing " + wrote(p, helper.absolutePos(LANDING)));
@@ -378,7 +378,7 @@ public class RerunTriggersTest {
             }, () -> watch.reruns() >= 1, () -> guard(helper, () -> {
                 LOG.info("[ghostpath] rerun command: started {} ticks after the command (quiet period is {})", started[0] - issued, LiveWatch.QUIET_TICKS);
                 helper.assertTrue(started[0] >= 0 && started[0] - issued < LiveWatch.QUIET_TICKS, "the run started after " + (started[0] - issued) + " ticks");
-                helper.assertTrue(chat.lines.stream().anyMatch(l -> l.startsWith("rerun:") && l.contains("changed since last: nothing")), "chat: " + chat.lines);
+                helper.assertTrue(chat.lines.stream().anyMatch(l -> l.contains("rerun:") && l.contains("changed since last: nothing")), "chat: " + chat.lines);
                 helper.assertTrue(watch.lastTrigger() != null && watch.lastTrigger().label().equals("rerun: forced"), "last trigger " + watch.lastTrigger());
                 // a position that is not watched
                 LiveRerunTest.command(level, chat, "path rerun 1 2 3");
@@ -427,7 +427,7 @@ public class RerunTriggersTest {
             LiveRerunTest.waitFor(helper, "both reruns", 60000, () -> { }, () -> w1.reruns() >= 1 && w2.reruns() >= 1, () -> guard(helper, () -> {
                 helper.assertTrue(w1.failures() == 0 && w2.failures() == 0 && chat.lines.stream().noneMatch(l -> l.contains("rerun failed")), "a rerun failed: " + chat.lines);
                 helper.assertTrue(w1.cancelled() == 0 && w2.cancelled() == 0, "a run was cancelled: " + w1.cancelled() + "/" + w2.cancelled());
-                helper.assertTrue(chat.lines.stream().filter(l -> l.startsWith("rerun:")).count() == 2, "rerun lines: " + chat.lines);
+                helper.assertTrue(chat.lines.stream().filter(l -> l.contains("rerun:")).count() == 2, "rerun lines: " + chat.lines);
                 int a = w1.reruns();
                 int b = w2.reruns();
                 BlockPos abs2 = helper.absolutePos(lever2);

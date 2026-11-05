@@ -67,7 +67,7 @@ public class AreaGameTest implements FabricClientGameTest {
             int orange = ClientShots.count(shot, c -> ClientShots.r(c) > 225 && ClientShots.g(c) > 100 && ClientShots.g(c) < 175 && ClientShots.b(c) < 90);
             int pale = ClientShots.count(shot, c -> ClientShots.r(c) > 60 && ClientShots.r(c) < 140 && ClientShots.g(c) > 120 && ClientShots.g(c) < 190 && ClientShots.b(c) > 220);
             int yellow = ClientShots.count(shot, c -> ClientShots.r(c) > 235 && ClientShots.g(c) > 205 && ClientShots.b(c) < 120);
-            int green = ClientShots.count(shot, c -> ClientShots.r(c) < 110 && ClientShots.g(c) > 190 && ClientShots.b(c) > 90 && ClientShots.b(c) < 170);
+            int green = ClientShots.count(shot, c -> ClientShots.r(c) < 150 && ClientShots.g(c) > 170 && ClientShots.b(c) < 150 && ClientShots.g(c) - ClientShots.r(c) > 40);
             int magenta = ClientShots.count(shot, c -> ClientShots.r(c) > 200 && ClientShots.g(c) < 130 && ClientShots.b(c) > 190);
             LOG.info("[ghostpath] area drawing: orange (written) {}, pale blue (read) {}, yellow (last trigger) {}, green (watched) {}, magenta (widened chunks) {}", orange, pale, yellow, green, magenta);
             String[] hud = new String[1];

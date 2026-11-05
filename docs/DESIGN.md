@@ -889,6 +889,13 @@ Code: `CauseTracker.frozenKind/onLevelTickEnd/onExplosionStart/onExplosionPush` 
 
 ---
 
+## Session D: saved paths, animation, look  [implemented, tested by data]
+
+- **Saved paths** (`saved` package). `SavedPath` = the latest `PathSnapshot` lines + `PathSnapshot.Origin` (trigger, game time; set in `MachineRecorder` and `LiveWatch` where the snapshot is published) + dimension, ticks, date, shown. File = compressed NBT (`NbtIo.writeCompressed`), `version` 1, doubles as raw bits in long arrays (bit-identical, -0.0 included), lines/tail/freeze/stasis/continuations. Read with `NbtIo.readCompressed(path, NbtAccounter.unlimitedHeap())` (`NbtIo.java:31`); folder from `MinecraftServer.getWorldPath(new LevelResource("ghostpath/saved"))` (`MinecraftServer.java:1974`). Atomic write: temp file in the same folder, `Files.move(ATOMIC_MOVE, REPLACE_EXISTING)`. Bad files: skipped, warning kept in the store and sent on join (`ServerPlayConnectionEvents.JOIN`) and in `list`, never deleted. Delete confirmation uses real time (30 s), per name. Continuation points are client data (`Tails`): the client registers `PathStore.continuationSource`, `Tails.Job.copyOut` is synchronized with `step`.
+- **Animation.** `PathMorph` is pure (`at(0)` is the old frame object, `at(1)` the new snapshot's own arrays; between: fresh arrays, nothing written). `MorphTracker` decides per snapshot serial; a morph that starts during another one takes `at(progress)` of the running one as its old frame. Clock = `System.nanoTime()` in the renderer. `PathSettings.animationTestScale` exists only so the client test can see a morph run.
+- **Look.** `style.Style` holds everything. Labels moved from `Gizmos.billboardText` (`TextGizmo.java`: no background, no per-label layout) to the HUD pass: world point -> screen with `GameRenderer.projectPointToScreen` (`GameRenderer.java:669`), behind-camera test with the camera's forward vector. **Consequence: labels are no longer depth-tested (visible through blocks)**, and their size is screen-space: the old world-space distance scaling was replaced by `Style.labelScale` (1x to 2x with distance). Declutter = `LabelLayout` (nearest wins, pure). Panels: `PanelModel` is built from `PanelText`'s lines, which stay the source of every fact. Tests compare chat with `contains` since every line now starts with the prefix.
+- **Not checked:** the look itself (no screenshots by order). Client test `SavedAnimClientGameTest` checks hover, pins, snapshot immutability, the saved hover line and show off through data only.
+
 ## Rulings (user decisions)
 
 **R1. Explosion randomness: seed it.**

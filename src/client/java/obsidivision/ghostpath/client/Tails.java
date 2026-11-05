@@ -60,8 +60,14 @@ public final class Tails {
             this.tail = tail;
         }
 
-        public boolean done() {
+        public synchronized boolean done() {
             return this.endReason != null;
+        }
+
+        /** A copy of what the job has so far, for a saved path (any thread: {@link #step} holds the same lock). */
+        public synchronized obsidivision.ghostpath.saved.SavedPath.Cont copyOut() {
+            return new obsidivision.ghostpath.saved.SavedPath.Cont(this.ticks.toLongArray(), this.xyz.toDoubleArray(), this.vel.toDoubleArray(), this.box.toDoubleArray(),
+                this.endReason == null ? "continuing" : this.endReason, this.endReason != null);
         }
 
         /** Why the continuation ended; null while it still runs. */
@@ -73,7 +79,7 @@ public final class Tails {
             return this.ticks.size();
         }
 
-        void step(ClientLevel level) {
+        synchronized void step(ClientLevel level) {
             if (this.endReason != null) {
                 return;
             }
@@ -167,6 +173,12 @@ public final class Tails {
     private static final Map<Integer, Job> JOBS = new HashMap<>();
 
     private Tails() {
+    }
+
+    /** The continuation of line {@code index} of the snapshot as plain data, or null (for {@code /path save}, through {@link PathStore#continuationSource}). */
+    static obsidivision.ghostpath.saved.SavedPath.@Nullable Cont copyOut(PathSnapshot snapshot, int index) {
+        Job j = job(snapshot, index);
+        return j == null || j.points() == 0 ? null : j.copyOut();
     }
 
     /** The continuation of line {@code index} of the snapshot, or null (no tail, or not started for this snapshot). */

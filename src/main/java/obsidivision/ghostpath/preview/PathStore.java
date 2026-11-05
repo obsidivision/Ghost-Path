@@ -27,6 +27,29 @@ public final class PathStore {
         return latest;
     }
 
+    /**
+     * Registered by the client: the continuation points of line {@code index} of a snapshot (data the client computed, see {@code Tails}), or
+     * null. Absent without a client; a saved path then has no continuation points.
+     */
+    public static volatile java.util.function.@Nullable BiFunction<PathSnapshot, Integer, obsidivision.ghostpath.saved.SavedPath.@Nullable Cont> continuationSource;
+
+    /** Continuation points of every line of {@code s} that has any, by line index. */
+    public static java.util.Map<Integer, obsidivision.ghostpath.saved.SavedPath.Cont> continuations(PathSnapshot s) {
+        java.util.function.BiFunction<PathSnapshot, Integer, obsidivision.ghostpath.saved.SavedPath.Cont> src = continuationSource;
+        java.util.Map<Integer, obsidivision.ghostpath.saved.SavedPath.Cont> out = new java.util.HashMap<>();
+        if (src != null) {
+            for (int i = 0; i < s.lines().size(); i++) {
+                if (s.lines().get(i).tail() != null) {
+                    obsidivision.ghostpath.saved.SavedPath.Cont c = src.apply(s, i);
+                    if (c != null) {
+                        out.put(i, c);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
     public static void clear() {
         latest = null;
     }

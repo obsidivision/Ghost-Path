@@ -10,6 +10,7 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 import obsidivision.ghostpath.PathSettings;
+import obsidivision.ghostpath.style.Style;
 import obsidivision.ghostpath.preview.AreaData;
 import obsidivision.ghostpath.preview.PathSnapshot;
 import obsidivision.ghostpath.preview.PathStore;
@@ -23,13 +24,6 @@ import obsidivision.ghostpath.preview.PathStore;
 public final class AreaRenderer {
     /** Milliseconds the last trigger stays highlighted after the rerun's result was published. */
     public static final long HIGHLIGHT_MILLIS = 6000L;
-    static final int WRITE_STROKE = 0xFFFF8A30;
-    static final int WRITE_FILL = 0x30FF8A30;
-    static final int READ_STROKE = 0xB05AA0FF;
-    static final int WATCHED_STROKE = 0x9040E080;
-    static final int CHUNK_STROKE = 0xA040D0FF;
-    static final int WIDENED_STROKE = 0xB0FF50E0;
-    static final int TRIGGER_COLOR = 0xFFFFE040;
 
     /** Frames in which the area was drawn, and the boxes of the last such frame (read by the client game test). */
     public static volatile int framesDrawn;
@@ -51,15 +45,15 @@ public final class AreaRenderer {
         for (AreaData.Box b : a.boxes()) {
             AABB bb = box(b);
             if (b.write()) {
-                Gizmos.cuboid(bb, GizmoStyle.strokeAndFill(WRITE_STROKE, 3.0F, WRITE_FILL));
+                Gizmos.cuboid(bb, GizmoStyle.strokeAndFill(Style.current().areaWrite(), 3.0F, Style.current().areaWriteFill()));
             } else {
-                Gizmos.cuboid(bb, GizmoStyle.stroke(READ_STROKE, 1.5F));
+                Gizmos.cuboid(bb, GizmoStyle.stroke(Style.current().areaRead(), 1.5F));
             }
             boxes++;
         }
         if (PathSettings.areaWatched) {
             for (AreaData.Box b : a.watched()) {
-                Gizmos.cuboid(box(b), GizmoStyle.stroke(WATCHED_STROKE, 1.0F));
+                Gizmos.cuboid(box(b), GizmoStyle.stroke(Style.current().areaWatched(), 1.0F));
                 boxes++;
             }
         }
@@ -67,7 +61,7 @@ public final class AreaRenderer {
             double y0 = a.minY() - 2;
             double y1 = a.maxY() + 3;
             for (AreaData.ChunkCell c : a.chunkCells()) {
-                Gizmos.cuboid(new AABB(c.x() * 16.0, y0, c.z() * 16.0, c.x() * 16.0 + 16.0, y1, c.z() * 16.0 + 16.0), GizmoStyle.stroke(c.widened() ? WIDENED_STROKE : CHUNK_STROKE, 1.0F));
+                Gizmos.cuboid(new AABB(c.x() * 16.0, y0, c.z() * 16.0, c.x() * 16.0 + 16.0, y1, c.z() * 16.0 + 16.0), GizmoStyle.stroke(c.widened() ? Style.current().areaWidened() : Style.current().areaChunk(), 1.0F));
                 boxes++;
             }
         }
@@ -78,8 +72,8 @@ public final class AreaRenderer {
                 // pulses: the box breathes (±0.08) twice a second; fades out over the last second
                 double pulse = 0.04 + 0.04 * Math.sin(age / 1000.0 * Math.PI * 4);
                 int alpha = age > HIGHLIGHT_MILLIS - 1000 ? (int) (255 * (HIGHLIGHT_MILLIS - age) / 1000.0) : 255;
-                int color = alpha << 24 | (TRIGGER_COLOR & 0xFFFFFF);
-                Gizmos.cuboid(new AABB(ch.pos()).inflate(pulse), GizmoStyle.strokeAndFill(color, 4.0F, (alpha / 4) << 24 | (TRIGGER_COLOR & 0xFFFFFF)));
+                int color = alpha << 24 | (Style.current().areaTrigger() & 0xFFFFFF);
+                Gizmos.cuboid(new AABB(ch.pos()).inflate(pulse), GizmoStyle.strokeAndFill(color, 4.0F, (alpha / 4) << 24 | (Style.current().areaTrigger() & 0xFFFFFF)));
                 PathRenderer.label(ch.label(), Vec3.atCenterOf(ch.pos()).add(0.0, 1.0, 0.0), color);
                 boxes++;
             }
@@ -155,9 +149,9 @@ public final class AreaRenderer {
         for (String l : lines) {
             w = Math.max(w, font.width(l));
         }
-        g.fill(4, 4, 4 + w + 8, 4 + lines.size() * 10 + 4, 0xA0101010);
+        g.fill(4, 4, 4 + w + 8, 4 + lines.size() * 10 + 4, Style.current().panelBackground());
         for (int i = 0; i < lines.size(); i++) {
-            g.text(font, lines.get(i), 8, 6 + i * 10, capped && i == 0 ? 0xFFFFB030 : 0xFFE0E0E0, false);
+            g.text(font, lines.get(i), 8, 6 + i * 10, capped && i == 0 ? Style.FREEZE_COLOR : Style.current().panelText(), false);
         }
     }
 }
