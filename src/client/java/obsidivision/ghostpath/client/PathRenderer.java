@@ -124,10 +124,8 @@ public final class PathRenderer {
             if (l.freeze() != null) {
                 Vec3 fp = at(l.xyz(), freezeAt, up);
                 Gizmos.point(fp, FREEZE_COLOR, END_DOT_SIZE);
-                label("real: freezes here (" + l.freeze().kind() + ")", fp.add(0.0, 0.3, 0.0), FREEZE_COLOR);
-                if (freezeAt == n - 1) {
-                    endLift = 0.8; // the end label would sit on the freeze label
-                }
+                // below the line: the end label (above it) is long and would cover this one
+                label("real: freezes here (" + l.freeze().kind() + ")", fp.add(0.0, -0.45, 0.0), FREEZE_COLOR);
             }
             if (l.count() > 1) {
                 label("×" + l.count(), start.add(0.0, 0.3, 0.0), color);

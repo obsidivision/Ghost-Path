@@ -47,6 +47,7 @@ After `/path machine` the machine is watched. When you place or break a block th
 |---|---|
 | `/path machine <x y z>` | Record, check and start watching a machine. |
 | `/path show on\|off` | Show or hide the lines. Key **G** does the same. |
+| `/path beyond-loaded on\|off` | On (default): a rerun that reaches past the loaded area takes the missing chunks from your save (see below). Off: loaded chunks only. |
 | `/path interval <ticks> [offset <n>]` | A dot every N ticks (default 5). The first and last dot are always there. |
 | `/path kick on\|off` | The small random push TNT gets when lit. Off: drawn without the sideways part, so the path does not wobble. |
 | `/path limit <ticks>` | The longest a recording may run (default 2000). |
@@ -84,6 +85,6 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect.
 - **Long runs**: a machine that does not go quiet (a clock) runs until the tick limit and is not watched. Raise or lower `/path limit`.
 - While a recording or a rerun is working, the world's autosave waits.
 - Only the last finished run is drawn when several machines are watched.
-- **Far shots**: the machine's own chunks must be loaded. If a rerun finds that TNT or a projectile flies beyond the copied area, the mod widens the area (up to 4 times, 3 chunks each) and takes chunks that are not loaded from your **save** (without loading them in the world). Those chunks are treated as if they were loaded and ticking, so the path shows where things would go, not that the real chunk would freeze. Only what was last saved is used: no mobs or items lying there, and nothing newer than the save.
+- **Far shots**: the machine's own chunks must be loaded. If a rerun finds that TNT or a projectile flies beyond the copied area, the mod widens the area (up to 4 times, 3 chunks each) and takes chunks that are not loaded from your **save** (without loading them in the world; `/path beyond-loaded off` turns this off). Chunks that are loaded but do not tick entities in the real world (the two rings around loaded chunks) are treated like them. In the ghost all of those tick, so the line keeps going, but **from the first point in a chunk where the real world would freeze the thing, the line is dashed and faded**, an amber dot and the label `real: freezes here (unloaded)` or `(lazy)` mark that point, and the end label gives both: `real: frozen at t+36; ghost: hit block at t+52`. The chat line lists them too. The save gives blocks, block entities (chests...), scheduled ticks (a repeater's pending tick keeps its remaining delay) and entities (TNT, items, mobs in that chunk as last saved; they get new entity ids and fresh random numbers). A chunk that is half-unloaded (the server still holds it with unsaved changes) is taken from memory, newer than the save. Not from the save: block events, POI, nothing newer than the last write.
 
 If something looks wrong, check `logs/latest.log` and tell us which machine and which command.

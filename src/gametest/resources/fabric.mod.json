@@ -10,7 +10,8 @@
       "obsidivision.ghostpath.test.GizmoVisibilityGameTest",
       "obsidivision.ghostpath.test.ContinuationEffectsGameTest",
       "obsidivision.ghostpath.test.InspectorGameTest",
-      "obsidivision.ghostpath.test.ClientDuperGameTest"
+      "obsidivision.ghostpath.test.ClientDuperGameTest",
+      "obsidivision.ghostpath.test.FreezeDrawGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",
