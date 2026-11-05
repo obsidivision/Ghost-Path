@@ -33,6 +33,14 @@ After `/path machine` the machine is watched. When you place or break a block th
 - `/path rerun` (or `/path rerun <x y z>`) reruns the watched machine(s) now, without waiting for a change (it still waits until the real machine is idle). Several watched machines, even in one chunk, rerun one after the other.
 - The chat line also says how long the copy took: `copied in 40 ms over 12 ticks`. A long machine's copy is spread over server ticks with the same time budget as the run, so the game does not stall.
 - A change of air to air, or in a chunk that is not loaded, does not count.
+- If the chunks around the machine are loaded differently than when you recorded it (you walked away or closer, or changed the simulation distance), the chat line says `chunk loading changed since recording: chunk X Z: block ticking -> entity ticking; ...`. The rerun uses the loading as it is now.
+
+### Frozen entities (lazy chunks)
+
+A chunk next to the loaded area can be loaded without ticking entities (a "lazy" chunk). Things in it **freeze**: they do not move and a TNT fuse does not count down. But explosions still change a frozen entity's velocity (lazy acceleration), and pistons in such a chunk can still push it. The mod records this as it happens:
+- A frozen entity never keeps a recording or a rerun going. The run ends when the rest of the machine is done, and the path ends with `frozen: lazy chunk` (or `frozen: unloaded`).
+- No line is drawn while it is frozen. A light-blue dot marks where it froze, with `frozen N ticks` under it. If it ticks again, the line goes on from where it is then. If a piston moved it while it was frozen, a dashed light-blue line connects the two places.
+- Point at the light-blue dot: the panel lists its velocity at the end of every frozen tick, and which explosions (number and tick) pushed it. That is how you can see velocity building up.
 
 ### Ghost area
 
@@ -83,6 +91,7 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect, and one 
 | `left dimension` | It went through a portal-like transfer into another dimension. |
 | `portal` | It reached a portal. Portals are not simulated. |
 | `unloaded` | It was removed with its chunk. |
+| `frozen: lazy chunk` / `frozen: unloaded` | It was still frozen (its chunk does not tick entities) when the run ended. |
 | `removed` | It was removed for another reason. |
 | `out of world`, `failed` | Only for the continued arrows: fell out of the world, or the estimate could not be made. |
 

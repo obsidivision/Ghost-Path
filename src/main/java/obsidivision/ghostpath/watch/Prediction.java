@@ -43,13 +43,15 @@ import obsidivision.ghostpath.record.Recording;
  * @param flightNotes     hits and removals of chain entities (step 5)
  * @param liveProjectiles chain projectiles still flying when the run stopped at the tick limit (step 5)
  * @param maxSliceMillis  the longest slice of ghost ticks, copy excluded (the budget is checked after each ghost tick)
+ * @param loadingChanged  copied chunks whose loading class differs from the recording's (player moved, simulation distance changed); empty if none
  * @param notTicking      copied chunks the real world does not tick entities in: chunk key to "unloaded" or "lazy" (see GhostCopy.Prepared#realNotTicking)
  */
 public record Prediction(int ticks, boolean limitHit, int tntSpawned, List<Integer> tntSpawnTicks, List<ChainEvent> events,
                          List<CauseTracker.EntityTrace> trace, Footprint footprint, CauseTracker.Pending pendingAtEnd, ChunkPos copiedMin,
                          ChunkPos copiedMax, boolean widened, List<ChunkPos> beyond, List<String> gaps, int serverTicks, long millis, long copyMillis,
                          long maxSliceMillis, long createMillis, String triggerNote, List<CauseTracker.FlightPoint> flightPoints,
-                         List<CauseTracker.FlightNote> flightNotes, List<CauseTracker.LiveEntity> liveProjectiles, Map<Long, String> notTicking, int copyTicks, List<String> notSimulated) {
+                         List<CauseTracker.FlightNote> flightNotes, List<CauseTracker.LiveEntity> liveProjectiles, Map<Long, String> notTicking, int copyTicks, List<String> notSimulated,
+                         List<String> loadingChanged) {
 
     /** The chain entity states of one tick, in the order the ghost ticked them. */
     public List<CauseTracker.EntityTrace> statesAt(long tick) {

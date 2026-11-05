@@ -50,6 +50,8 @@ import net.minecraft.world.phys.AABB;
  * @param flightNotes     hits and removals of chain entities (step 5)
  * @param liveProjectiles chain projectiles still flying when the recording ended (tick limit), saved for the client's continuation (step 5)
  * @param notSimulated   things the ghost cannot imitate, as text ("player-owned pearl: chunk loading not simulated")
+ * @param loadingAtStart the loading class of the chunks around the trigger when it was pressed (a rerun warns if it changed)
+ * @param frozenTicks    ticks in which a chain entity was frozen (its chunk does not tick entities), summed over entities
  * @param notFollowed     chain things lost or not followed (unloaded with their chunk, left the dimension, vibration to
  *                        an entity listener), as event text with tick and position
  */
@@ -90,13 +92,15 @@ public record Recording(
     List<CauseTracker.FlightPoint> flightPoints,
     List<CauseTracker.FlightNote> flightNotes,
     List<CauseTracker.LiveEntity> liveProjectiles,
-    List<String> notSimulated
+    List<String> notSimulated,
+    LoadingLevels loadingAtStart,
+    int frozenTicks
 ) {
     static Recording of(CauseTracker tracker, UndoLog undo, BlockPos trigger, int ticks, int limit, boolean limitHit,
                         CauseTracker.Pending pendingAtEnd, boolean kick, long seed, long startGameTime, Weather weatherAtStart,
                         Weather weatherAtEnd, int chunksReloaded, net.minecraft.world.clock.PackedClockStates clocksAtStart,
                         net.minecraft.world.level.block.state.BlockState triggerStateAtStart,
-                        List<CauseTracker.LiveEntity> liveProjectiles) {
+                        List<CauseTracker.LiveEntity> liveProjectiles, LoadingLevels loadingAtStart) {
         int notAllowed = 0;
         int allowed = 0;
         int inexact = 0;
@@ -128,7 +132,8 @@ public record Recording(
             undo.sharedRestored(), undo.nonChainBlocksLeft(), undo.nonChainEntitiesLeft(),
             tracker.notFollowed().stream().map(ChainEvent::toString).toList(),
             clocksAtStart, List.copyOf(tracker.entityTrace()), Map.copyOf(tracker.readFirstTicks()), triggerStateAtStart,
-            List.copyOf(tracker.flightPoints()), List.copyOf(tracker.flightNotes()), List.copyOf(liveProjectiles), tracker.notSimulated());
+            List.copyOf(tracker.flightPoints()), List.copyOf(tracker.flightNotes()), List.copyOf(liveProjectiles), tracker.notSimulated(),
+            loadingAtStart, tracker.frozenTicks());
     }
 
     /** Block positions read or written: the footprint without entity areas. */
@@ -136,6 +141,21 @@ public record Recording(
         Set<BlockPos> all = new LinkedHashSet<>(this.writes);
         all.addAll(this.reads.keySet());
         return all;
+    }
+
+    /** Chain entities whose last point is a frozen one: "#3 minecraft:ender_pearl (lazy chunk)". */
+    public List<String> frozenAtEnd() {
+        Map<Integer, CauseTracker.FlightPoint> last = new LinkedHashMap<>();
+        for (CauseTracker.FlightPoint p : this.flightPoints) {
+            last.put(p.index(), p);
+        }
+        List<String> out = new ArrayList<>();
+        for (CauseTracker.FlightPoint p : last.values()) {
+            if (p.frozen() != null && p.tick() == this.ticks) {
+                out.add("#" + p.index() + " " + p.type() + " (" + p.frozen() + ")");
+            }
+        }
+        return out;
     }
 
     /** The summary the command prints: one line per entry. */
@@ -161,6 +181,11 @@ public record Recording(
         out.add("Weather: " + this.weatherAtStart + " at start" + (this.weatherAtEnd.toString().equals(this.weatherAtStart.toString()) ? "" : ", " + this.weatherAtEnd + " at end"));
         if (this.unseededDrawsInexact > 0) {
             out.add("Inexact: a mob (its AI, or its own random) drew unseeded numbers, so the result may not repeat exactly");
+        }
+        List<String> frozen = this.frozenAtEnd();
+        if (this.frozenTicks > 0) {
+            out.add("Frozen: " + this.frozenTicks + " entity ticks in chunks that do not tick entities"
+                + (frozen.isEmpty() ? "" : "; frozen at the end: " + String.join(", ", frozen)));
         }
         if (!this.notSimulated.isEmpty()) {
             out.add("Not simulated: " + String.join("; ", this.notSimulated));

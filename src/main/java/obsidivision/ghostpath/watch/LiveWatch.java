@@ -400,6 +400,9 @@ public final class LiveWatch {
         if (!p.notSimulated().isEmpty()) {
             line.append(" (").append(String.join("; ", p.notSimulated())).append(")");
         }
+        if (!p.loadingChanged().isEmpty()) {
+            line.append(" (chunk loading changed since recording: ").append(String.join("; ", p.loadingChanged())).append(")");
+        }
         if (p.triggerNote() != null) {
             line.append(" (").append(p.triggerNote()).append(")");
         }
@@ -490,6 +493,9 @@ public final class LiveWatch {
     private static boolean holdsOpen(Entity e) {
         if (e.isRemoved()) {
             return false;
+        }
+        if (e.level() instanceof ServerLevel sl && obsidivision.ghostpath.record.CauseTracker.frozenKind(sl, e) != null) {
+            return false; // frozen in a lazy chunk: it may stay there for ever (a pearl in stasis), the machine is idle
         }
         if (e instanceof PrimedTnt || e instanceof FallingBlockEntity || e instanceof Projectile) {
             return true;

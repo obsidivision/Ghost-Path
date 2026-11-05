@@ -224,6 +224,15 @@ public final class CauseTracker {
     private final Map<Entity, Long> arrowStuckSince = new IdentityHashMap<>();
     /** Item ticks whose position changed, but by less than {@link #ITEM_STILL_EPSILON}, and so counted as unchanged. */
     private int itemDriftTicks;
+    /** Relative tick of each chain entity's last own tick (frozen entities: see {@link #onLevelTickEnd}). */
+    private final Map<Entity, Long> lastTicked = new IdentityHashMap<>();
+    /** Chain entities that got a frozen point at the end of the last tick, with its kind. */
+    private Map<Entity, String> frozenLastTick = new IdentityHashMap<>();
+    /** Chain explosions so far ({@code ServerExplosion.explode} in chain context), and the one running now (0: none). */
+    private int explosions;
+    private int currentExplosion;
+    /** Frozen ticks seen (chain entities of the drawn kinds that did not tick in a tick because their chunk does not tick entities). */
+    private int frozenTicks;
     /** Chain entities whose tick is running now, innermost last (passengers tick inside their vehicle's tick). */
     private final Deque<Entity> ticking = new ArrayDeque<>();
 
@@ -383,6 +392,9 @@ public final class CauseTracker {
             if (!canHoldOpen(e)) {
                 continue; // living mobs, armor stands, ...: tagged, but never pending (ruling)
             }
+            if (frozenKind(this.level, e) != null) {
+                continue; // frozen (its chunk does not tick entities): never holds a run open (ruling, session "frozen entities")
+            }
             if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= ITEM_SETTLE_TICKS) {
                 continue;
             }
@@ -424,6 +436,108 @@ public final class CauseTracker {
     public static boolean canHoldOpen(Entity e) {
         return e instanceof PrimedTnt || e instanceof Projectile || e instanceof ItemEntity || e instanceof VehicleEntity
             || e instanceof FallingBlockEntity;
+    }
+
+    /** End reason / kind of a frozen entity in a chunk that is loaded but does not tick entities. */
+    public static final String FROZEN_LAZY = "lazy chunk";
+    /** ... in a chunk that is not loaded (FULL) at all. */
+    public static final String FROZEN_UNLOADED = "unloaded";
+
+    /**
+     * Why {@code e} does not tick where it is, or null if it does (DESIGN "Lazy chunks"): the vanilla entity loop ticks an entity only
+     * if its section ticks and its chunk is in entity ticking range, which is exactly {@code ServerLevel.isPositionEntityTicking}
+     * (26.2 :1800-1802; the loop :420-447). A passenger is ticked by its vehicle (:836), so it is never frozen by itself here.
+     * {@link #FROZEN_UNLOADED} when the chunk is not a loaded full chunk, else {@link #FROZEN_LAZY}.
+     */
+    public static @Nullable String frozenKind(ServerLevel level, Entity e) {
+        if (e.isPassenger() || e instanceof Player) {
+            return null;
+        }
+        BlockPos pos = e.blockPosition();
+        if (level.isPositionEntityTicking(pos)) {
+            return null;
+        }
+        return level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null ? FROZEN_UNLOADED : FROZEN_LAZY;
+    }
+
+    /** Ticks in which a chain entity was frozen (summed over entities). */
+    public int frozenTicks() {
+        return this.frozenTicks;
+    }
+
+    /** Chain explosions so far. */
+    public int explosions() {
+        return this.explosions;
+    }
+
+    /**
+     * {@code ServerExplosion.explode} is starting (26.2 :234): a chain explosion gets the next index (from 1); the pushes it gives
+     * frozen chain entities are noted with it ({@link #onExplosionPush}).
+     */
+    public void onExplosionStart(Level level) {
+        this.currentExplosion = this.inChain(level) ? ++this.explosions : 0;
+    }
+
+    /**
+     * A chain explosion pushed {@code e} ({@code ServerExplosion.hurtEntities}, the {@code entity.push(knockback)} at 26.2 :199; the push
+     * itself tagged it, through setDeltaMovement). If the entity is frozen, a flight note {@code "explosion #k"} at this tick: the
+     * inspector lists which explosions built up a frozen entity's velocity (lazy acceleration).
+     */
+    public void onExplosionPush(Level level, Entity e) {
+        if (this.currentExplosion == 0 || !this.inChain(level) || !this.traceEntities) {
+            return;
+        }
+        Integer index = this.chainEntities.get(e);
+        if (index != null && frozenKind(this.level, e) != null) {
+            this.flightNotes.add(new FlightNote(this.level.getGameTime() - this.startTime, index, EXPLOSION_NOTE + this.currentExplosion));
+        }
+    }
+
+    /** Prefix of the flight note an explosion leaves on a frozen entity it pushed. */
+    public static final String EXPLOSION_NOTE = "explosion #";
+
+    /**
+     * End of the tracked level's tick ({@code ServerLevel.tick} TAIL, 26.2 :355): every chain entity of a drawn kind that did not tick in
+     * this tick and is frozen ({@link #frozenKind}) gets a flight point marked with the kind (position and velocity as they are now: a
+     * piston may have moved it, an explosion changed its velocity) and, with the trace on, an entity-trace entry in phase "frozen", so the
+     * ghost check compares the build-up too. In order of the chain entity index (the map is by identity).
+     */
+    public void onLevelTickEnd(Level level) {
+        if (level != this.level) {
+            return;
+        }
+        long now = this.level.getGameTime() - this.startTime;
+        Map<Entity, String> frozenNow = new IdentityHashMap<>();
+        List<Map.Entry<Entity, Integer>> entries = new ArrayList<>(this.chainEntities.entrySet());
+        entries.sort(Map.Entry.comparingByValue());
+        for (Map.Entry<Entity, Integer> en : entries) {
+            Entity e = en.getKey();
+            if (e.isRemoved() || this.level.getEntity(e.getId()) != e || FlightKind.of(e) == FlightKind.OTHER) {
+                continue;
+            }
+            Long last = this.lastTicked.get(e);
+            if (last != null && last == now) {
+                continue;
+            }
+            String kind = frozenKind(this.level, e);
+            if (kind == null) {
+                // frozen at the end of the last tick and not ticked in this one: something moved it into a ticking chunk during this
+                // tick (a piston: block entities tick after entities), it ticks from the next tick on. This tick still counts as frozen,
+                // so the point of this tick is where the push left it (the end of the dashed move)
+                kind = this.frozenLastTick.get(e);
+                if (kind == null) {
+                    continue;
+                }
+            } else {
+                frozenNow.put(e, kind);
+            }
+            this.frozenTicks++;
+            if (this.traceEntities) {
+                this.addFlightPoint(e, en.getValue(), kind);
+                this.trace.add(new EntityTrace(this.events.size(), now, "frozen", en.getValue(), EntityType.getKey(e.getType()).toString(), exactState(e)));
+            }
+        }
+        this.frozenLastTick = frozenNow;
     }
 
     /** Item ticks counted as "unchanged" although the position moved by less than {@link #ITEM_STILL_EPSILON}. */
@@ -848,6 +962,7 @@ public final class CauseTracker {
         if (index == null) {
             return;
         }
+        this.lastTicked.put(entity, this.level.getGameTime() - this.startTime);
         Vec3 p = entity.position();
         Vec3 v = entity.getDeltaMovement();
         if (entity instanceof ItemEntity) {
@@ -911,11 +1026,17 @@ public final class CauseTracker {
      * doubles; {@code box} is its bounding box then (step 6, the inspector), {@code fuse} a primed TNT's remaining fuse (else -1). {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
      */
     public record FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
-                              boolean onGround, boolean removed, boolean portal, @Nullable AABB box, int fuse) {
+                              boolean onGround, boolean removed, boolean portal, @Nullable AABB box, int fuse, @Nullable String frozen) {
+        /** A point after a tick of the entity's own (not frozen). */
+        public FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
+                           boolean onGround, boolean removed, boolean portal, @Nullable AABB box, int fuse) {
+            this(tick, index, type, kind, x, y, z, vx, vy, vz, onGround, removed, portal, box, fuse, null);
+        }
+
         /** Without the bounding box and the fuse (tests; the builder then uses a box of no size at the position and fuse -1). */
         public FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
                            boolean onGround, boolean removed, boolean portal) {
-            this(tick, index, type, kind, x, y, z, vx, vy, vz, onGround, removed, portal, null, -1);
+            this(tick, index, type, kind, x, y, z, vx, vy, vz, onGround, removed, portal, null, -1, null);
         }
     }
 
@@ -924,10 +1045,15 @@ public final class CauseTracker {
     }
 
     private void addFlightPoint(Entity e, int index) {
+        this.addFlightPoint(e, index, null);
+    }
+
+    /** {@code frozen}: null after an own tick or where it was added; else the frozen kind (a point at the end of a tick it did not tick in). */
+    private void addFlightPoint(Entity e, int index, @Nullable String frozen) {
         Vec3 p = e.position();
         Vec3 v = e.getDeltaMovement();
         this.flightPoints.add(new FlightPoint(this.level.getGameTime() - this.startTime, index, EntityType.getKey(e.getType()).toString(), FlightKind.of(e),
-            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null, e.getBoundingBox(), e instanceof PrimedTnt tnt ? tnt.getFuse() : -1));
+            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null, e.getBoundingBox(), e instanceof PrimedTnt tnt ? tnt.getFuse() : -1, frozen));
     }
 
     /** {@code Projectile.hitTargetOrDeflectSelf}, before it runs: a chain projectile hit a block or an entity. */

@@ -31,6 +31,15 @@ public final class PanelText {
             out.add(point >= f.point() ? "BEYOND the real ticking area (" + f.kind() + "): the real one froze at t+" + f.tick()
                 : "real: freezes at t+" + f.tick() + " (" + f.kind() + ")");
         }
+        PathSnapshot.Stasis st = line.stasisAt(point);
+        if (st != null) {
+            frozen(out, st);
+        }
+        for (PathSnapshot.Stasis s : line.stasis()) {
+            if (s.resume() == point) {
+                out.add("moved while frozen (t+" + s.fromTick() + "..t+" + s.toTick() + "), " + (s.resumed() ? "ticks again at t+" + (s.toTick() + 1) : "still frozen at the end"));
+            }
+        }
         if (point == line.points() - 1) {
             out.add("ends: " + PathSnapshot.endText(line));
         } else if (fuse < 0) {
@@ -38,6 +47,45 @@ public final class PanelText {
         }
         out.add(count > 1 ? "stack x" + count + ", all identical" : "single");
         return out;
+    }
+
+    /** Most velocity rows listed for one frozen stretch (equal velocities on consecutive ticks share a row). */
+    public static final int MAX_FROZEN_ROWS = 12;
+
+    /**
+     * A frozen stretch at its freeze point: how long, why, and the velocity at the end of each frozen tick, so a lazy-acceleration
+     * build-up is visible: consecutive ticks with the same velocity share a row ({@code t+5..t+79}), and a row says which chain explosions
+     * pushed it in its first tick ({@code explosion #3}). Five decimals here; the exact doubles are in the trace and the snapshot.
+     */
+    static void frozen(List<String> out, PathSnapshot.Stasis st) {
+        out.add("FROZEN " + st.frozenTicks() + " ticks (" + st.kind() + ") t+" + st.fromTick() + "..t+" + st.toTick()
+            + (st.resumed() ? ", then ticks again" : ", until the end"));
+        java.util.Map<Long, List<String>> pushedAt = new java.util.LinkedHashMap<>();
+        for (String p : st.pushes()) {
+            int at = p.lastIndexOf(" t+");
+            long tick = Long.parseLong(p.substring(at + 3));
+            pushedAt.computeIfAbsent(tick, k -> new ArrayList<>()).add(p.substring(0, at).replace("explosion ", ""));
+        }
+        int rows = 0;
+        int i = 0;
+        double[] v = st.vel();
+        long[] t = st.ticks();
+        while (i < t.length) {
+            int j = i;
+            while (j + 1 < t.length && v[3 * (j + 1)] == v[3 * i] && v[3 * (j + 1) + 1] == v[3 * i + 1] && v[3 * (j + 1) + 2] == v[3 * i + 2]
+                && !pushedAt.containsKey(t[j + 1]) && t[j + 1] == t[j] + 1) {
+                j++;
+            }
+            if (rows == MAX_FROZEN_ROWS) {
+                out.add("... " + (t.length - i) + " more frozen ticks");
+                break;
+            }
+            List<String> pushes = pushedAt.get(t[i]);
+            out.add((i == j ? "t+" + t[i] : "t+" + t[i] + "..t+" + t[j]) + " vel " + String.format(java.util.Locale.ROOT, "%.5f %.5f %.5f", v[3 * i], v[3 * i + 1], v[3 * i + 2])
+                + (pushes == null ? "" : " < explosion " + String.join(" ", pushes)));
+            rows++;
+            i = j + 1;
+        }
     }
 
     /**
