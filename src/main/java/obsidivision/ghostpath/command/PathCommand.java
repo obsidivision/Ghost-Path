@@ -15,6 +15,7 @@ import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.coordinates.BlockPosArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import obsidivision.ghostpath.chat.Chat;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.permissions.Permissions;
 import obsidivision.ghostpath.PathSettings;
@@ -66,6 +67,10 @@ public final class PathCommand {
                 .then(Commands.literal("on").executes(ctx -> animation(ctx.getSource(), "on")))
                 .then(Commands.literal("off").executes(ctx -> animation(ctx.getSource(), "off")))
                 .then(Commands.literal("fast").executes(ctx -> animation(ctx.getSource(), "fast"))))
+            .then(Commands.literal("style")
+                .then(Commands.literal("default").executes(ctx -> style(ctx.getSource(), "default")))
+                .then(Commands.literal("soft").executes(ctx -> style(ctx.getSource(), "soft")))
+                .then(Commands.literal("contrast").executes(ctx -> style(ctx.getSource(), "contrast"))))
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
@@ -119,9 +124,9 @@ public final class PathCommand {
 
     private static int report(CommandSourceStack source, SavedStore.Result r) {
         if (r.ok()) {
-            source.sendSuccess(() -> Component.literal(r.message()), false);
+            source.sendSuccess(() -> Chat.success(r.message()), false);
         } else {
-            source.sendFailure(Component.literal(r.message()));
+            source.sendFailure(Chat.error(r.message()));
         }
         return r.ok() ? 1 : 0;
     }
@@ -140,10 +145,10 @@ public final class PathCommand {
         SavedStore st = store(source);
         java.util.List<SavedPath> list = st.list(archived);
         if (list.isEmpty()) {
-            source.sendSuccess(() -> Component.literal(archived ? "No archived paths." : "No saved paths."), false);
+            source.sendSuccess(() -> Chat.info(archived ? "No archived paths." : "No saved paths."), false);
         }
         for (SavedPath p : list) {
-            source.sendSuccess(() -> Component.literal(p.name() + ": " + p.dimension() + " " + p.triggerText() + ", " + p.tnt() + " TNT, " + formatDate(p.date())
+            source.sendSuccess(() -> Chat.info(p.name() + ": " + p.dimension() + " " + p.triggerText() + ", " + p.tnt() + " TNT, " + formatDate(p.date())
                 + (archived ? ", archived" : p.shown() ? ", shown" : ", hidden")), false);
         }
         warnSavedFiles(source.getServer(), source.getPlayer());
@@ -165,29 +170,36 @@ public final class PathCommand {
             return;
         }
         for (String w : SavedStore.of(server).warnings()) {
-            player.sendSystemMessage(Component.literal("Ghost Path: saved path " + w));
+            player.sendSystemMessage(Chat.warn("Saved path " + w));
         }
+    }
+
+    private static int style(CommandSourceStack source, String name) {
+        PathSettings.style = name;
+        obsidivision.ghostpath.Config.save();
+        source.sendSuccess(() -> Chat.success("Style " + name + (name.equals("soft") ? " (lighter, thinner)" : name.equals("contrast") ? " (bolder, with outlines)" : "")), false);
+        return 1;
     }
 
     private static int animation(CommandSourceStack source, String mode) {
         PathSettings.animation = mode;
         obsidivision.ghostpath.Config.save();
-        source.sendSuccess(() -> Component.literal("Animation " + mode + (mode.equals("off") ? " (a rerun's lines jump to the new prediction)"
+        source.sendSuccess(() -> Chat.info("Animation " + mode + (mode.equals("off") ? " (a rerun's lines jump to the new prediction)"
             : " (a rerun's lines morph to the new prediction in " + PathSettings.animationSeconds() + " s)")), false);
         return 1;
     }
 
     private static int kick(CommandSourceStack source, boolean on) {
         PathSettings.kick = on;
-        source.sendSuccess(() -> Component.literal("TNT kick " + (on ? "on" : "off")
-            + (on ? "" : ": drawn and discarded, horizontal part 0 (the upward 0.2 stays)")), false);
+        source.sendSuccess(() -> Chat.info("TNT kick " + (on ? "on" : "off")
+            + (on ? "" : " (horizontal part 0, upward 0.2 stays)")), false);
         return 1;
     }
 
     private static int beyondLoaded(CommandSourceStack source, boolean on) {
         PathSettings.beyondLoaded = on;
-        source.sendSuccess(() -> Component.literal("Beyond the loaded area: " + (on ? "on (a rerun takes chunks that are not loaded from the save and draws past them, dashed where the real world would freeze)"
-            : "off (a rerun uses loaded chunks only)")), false);
+        source.sendSuccess(() -> Chat.info("Beyond loaded chunks: " + (on ? "on (reruns read unloaded chunks from the save; dashed where the real world freezes)"
+            : "off (loaded chunks only)")), false);
         return 1;
     }
 
@@ -203,59 +215,59 @@ public final class PathCommand {
             case "chunks" -> "copied chunks layer (widened chunks in a second colour)";
             default -> "ghost area (the machine's footprint: written blocks stronger than read ones, the block change that started the last rerun)";
         };
-        source.sendSuccess(() -> Component.literal(what.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + what.substring(1) + (on ? " shown" : " hidden")
+        source.sendSuccess(() -> Chat.info(what.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + what.substring(1) + (on ? " shown" : " hidden")
             + (on && !PathSettings.showArea && !layer.equals("area") ? " (switch /path area on to see it)" : "")), false);
         return 1;
     }
 
     private static int show(CommandSourceStack source, boolean on) {
         PathSettings.showPaths = on;
-        source.sendSuccess(() -> Component.literal("Flight paths " + (on ? "shown" : "hidden")), false);
+        source.sendSuccess(() -> Chat.info("Flight paths " + (on ? "shown" : "hidden")), false);
         return 1;
     }
 
     private static int inspectMode(CommandSourceStack source, boolean toggle) {
         PathSettings.inspectToggle = toggle;
-        source.sendSuccess(() -> Component.literal("Inspect key: " + (toggle ? "press to switch on or off" : "hold")), false);
+        source.sendSuccess(() -> Chat.info("Inspect key: " + (toggle ? "press to switch on or off" : "hold")), false);
         return 1;
     }
 
     private static int pinsClear(CommandSourceStack source) {
         PathSettings.pinsClearSerial++;
-        source.sendSuccess(() -> Component.literal("Pins cleared."), false);
+        source.sendSuccess(() -> Chat.info("Pins cleared."), false);
         return 1;
     }
 
     private static int interval(CommandSourceStack source, int ticks, int offset) {
         PathSettings.dotInterval = ticks;
         PathSettings.dotOffset = offset;
-        source.sendSuccess(() -> Component.literal("Flight path dots: every " + ticks + " ticks, offset " + offset + " (ticks since the recording began; start and end always)"), false);
+        source.sendSuccess(() -> Chat.info("Flight path dots: every " + ticks + " ticks, offset " + offset + " (ticks since the recording began; start and end always)"), false);
         return ticks;
     }
 
     private static int limit(CommandSourceStack source, int ticks) {
         PathSettings.tickLimit = ticks;
-        source.sendSuccess(() -> Component.literal("Recording tick limit: " + ticks), false);
+        source.sendSuccess(() -> Chat.info("Recording tick limit: " + ticks), false);
         return ticks;
     }
 
     private static int watchMargin(CommandSourceStack source, int n) {
         PathSettings.watchMargin = n;
-        source.sendSuccess(() -> Component.literal("Watch margin: " + n + (n == 0 ? " (off: only the footprint and the neighbours of blocks the machine wrote count)"
+        source.sendSuccess(() -> Chat.info("Watch margin: " + n + (n == 0 ? " (off: only the footprint and the neighbours of blocks the machine wrote count)"
             : " blocks around every block the machine wrote (plus the footprint and the neighbours of written blocks)")), false);
         return n;
     }
 
     private static int rerun(CommandSourceStack source, BlockPos pos) {
         int n = LiveWatch.rerun(pos);
-        source.sendSuccess(() -> Component.literal(n == 0 ? (LiveWatch.watches().isEmpty() ? "No machine is watched." : "No such watch, or it is running now.")
+        source.sendSuccess(() -> Chat.info(n == 0 ? (LiveWatch.watches().isEmpty() ? "No machine is watched." : "No such watch, or it is running now.")
             : "Rerun queued for " + n + " watch" + (n == 1 ? "" : "es") + " (starts when the real machine is idle and one ghost is free)."), false);
         return n;
     }
 
     private static int watchList(CommandSourceStack source) {
         for (String line : LiveWatch.list()) {
-            source.sendSuccess(() -> Component.literal(line), false);
+            source.sendSuccess(() -> Chat.line(line), false);
         }
         return LiveWatch.watches().size();
     }
@@ -270,7 +282,7 @@ public final class PathCommand {
             }
         }
         int stopped = n;
-        source.sendSuccess(() -> Component.literal(stopped == 0 ? "No such watch." : "Stopped " + stopped + " watch" + (stopped == 1 ? "" : "es") + "."), false);
+        source.sendSuccess(() -> Chat.info(stopped == 0 ? "No such watch." : "Stopped " + stopped + " watch" + (stopped == 1 ? "" : "es") + "."), false);
         return stopped;
     }
 
@@ -280,31 +292,31 @@ public final class PathCommand {
                 @Override
                 public void done(Recording recording) {
                     for (String line : recording.summary()) {
-                        source.sendSuccess(() -> Component.literal(line), false);
+                        source.sendSuccess(() -> Chat.line(line), false);
                     }
                     // step 3: the same machine in a ghost, compared with what was just recorded
                     for (String line : GhostCheck.run(source.getLevel(), recording).lines()) {
-                        source.sendSuccess(() -> Component.literal(line), false);
+                        source.sendSuccess(() -> Chat.line(line), false);
                     }
                     // step 4: the machine is watched; a real change at its footprint reruns it in a fresh ghost
                     if (recording.limitHit()) {
-                        source.sendSuccess(() -> Component.literal("Not watched: the recording stopped at the tick limit."), false);
+                        source.sendSuccess(() -> Chat.info("Not watched: the recording stopped at the tick limit."), false);
                     } else if (PathSettings.watchAfterMachine) {
-                        LiveWatch.watch(recording, line -> source.sendSuccess(() -> Component.literal(line), false));
-                        source.sendSuccess(() -> Component.literal("Watching " + pos.toShortString() + ": a block change at its footprint reruns it"
+                        LiveWatch.watch(recording, line -> source.sendSuccess(() -> Chat.line(line), false));
+                        source.sendSuccess(() -> Chat.info("Watching " + pos.toShortString() + ": a block change at its footprint reruns it"
                             + " in a ghost after " + LiveWatch.QUIET_TICKS + " quiet ticks (/path watch list, /path watch stop)."), false);
                     }
                 }
 
                 @Override
                 public void failed(String message) {
-                    source.sendFailure(Component.literal("Recording failed: " + message));
+                    source.sendFailure(Chat.error("Recording failed: " + message));
                 }
             });
         } catch (MachineRecorder.RejectedException e) {
             throw new SimpleCommandExceptionType(Component.literal(e.getMessage())).create();
         }
-        source.sendSuccess(() -> Component.literal("Recording " + pos.toShortString() + " (tick limit " + PathSettings.tickLimit
+        source.sendSuccess(() -> Chat.info("Recording " + pos.toShortString() + " (tick limit " + PathSettings.tickLimit
             + ", kick " + (PathSettings.kick ? "on" : "off") + ") ..."), false);
         return 1;
     }

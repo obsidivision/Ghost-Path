@@ -279,13 +279,13 @@ public class SavedPathsTest {
         helper.assertTrue(!store.get(a).shown(), "hide");
         out.lines.clear();
         LiveRerunTest.command(level, out, "path saved list");
-        helper.assertTrue(out.lines.stream().anyMatch(l -> l.startsWith(a + ": minecraft:the_nether -12 64 3, 10 TNT, ") && l.endsWith(", hidden")), "list: " + out.lines);
+        helper.assertTrue(out.lines.stream().anyMatch(l -> l.contains(a + ": minecraft:the_nether -12 64 3, 10 TNT, ") && l.endsWith(", hidden")), "list: " + out.lines);
         LiveRerunTest.command(level, out, "path saved show " + a);
         LiveRerunTest.command(level, out, "path saved archive " + a);
         helper.assertTrue(store.getArchived(a) != null && SavedStore.visible().stream().noneMatch(p -> p.name().equals(a)), "archive");
         out.lines.clear();
         LiveRerunTest.command(level, out, "path saved list archived");
-        helper.assertTrue(out.lines.stream().anyMatch(l -> l.startsWith(a + ":") && l.endsWith(", archived")), "list archived: " + out.lines);
+        helper.assertTrue(out.lines.stream().anyMatch(l -> l.contains(a + ":") && l.endsWith(", archived")), "list archived: " + out.lines);
         LiveRerunTest.command(level, out, "path saved unarchive " + a);
         LiveRerunTest.command(level, out, "path saved delete " + a);
         helper.assertTrue(store.get(a) != null, "delete without confirm");

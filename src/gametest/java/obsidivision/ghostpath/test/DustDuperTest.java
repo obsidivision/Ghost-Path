@@ -600,7 +600,7 @@ public class DustDuperTest {
                         try {
                             obsidivision.ghostpath.watch.Prediction p = watch.latest();
                             obsidivision.ghostpath.preview.PathSnapshot after = obsidivision.ghostpath.preview.PathStore.latest();
-                            String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse("(no chat line)");
+                            String line = chat.lines.stream().filter(l -> l.contains("rerun:")).findFirst().orElse("(no chat line)");
                             LOG.info("[ghostpath] duper rerun: {}", line);
                             LOG.info("[ghostpath] duper rerun: {} ticks in {} server ticks, {} ms (ghost created in {} ms, copy {} ms, longest slice {} ms); TNT spawned {} (was {})",
                                 p.ticks(), p.serverTicks(), p.millis(), p.createMillis(), p.copyMillis(), p.maxSliceMillis(), p.tntSpawned(), rec.tntSpawned());

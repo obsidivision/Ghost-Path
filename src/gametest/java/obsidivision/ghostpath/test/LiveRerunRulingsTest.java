@@ -72,7 +72,7 @@ public class LiveRerunRulingsTest {
                 }, () -> watch.reruns() >= 1, () -> {
                     try {
                         Prediction p = watch.latest();
-                        String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).findFirst().orElse("");
+                        String line = chat.lines.stream().filter(l -> l.contains("rerun:")).findFirst().orElse("");
                         LOG.info("[ghostpath] chat: {}", line);
                         helper.assertTrue(p.tntSpawnTicks().equals(before), "TNT " + p.tntSpawnTicks() + ", recording " + before + " (the rerun did not predict the recorded pull)");
                         helper.assertTrue(line.contains("real lever is on; prediction is for off → on"), "chat line: " + line);

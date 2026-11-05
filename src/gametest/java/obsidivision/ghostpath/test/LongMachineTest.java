@@ -37,7 +37,7 @@ public class LongMachineTest {
             LiveRerunTest.command(level, chat, "path rerun");
             LiveRerunTest.waitFor(helper, "the spread rerun", 60000, () -> RerunTriggersTest.notFired(helper, level, 0), () -> watch.reruns() >= 1, () -> RerunTriggersTest.guard(helper, () -> {
                 Prediction spread = watch.latest();
-                String line = chat.lines.stream().filter(l -> l.startsWith("rerun:")).reduce((a, b) -> b).orElse("(none)");
+                String line = chat.lines.stream().filter(l -> l.contains("rerun:")).reduce((a, b) -> b).orElse("(none)");
                 LOG.info("[ghostpath] long copy (budget 0): {} chunks copied in {} ms over {} server ticks; line: {}", spread.copiedMax().x() - spread.copiedMin().x() + 1, spread.copyMillis(), spread.copyTicks(), line);
                 int chunks = (spread.copiedMax().x() - spread.copiedMin().x() + 1) * (spread.copiedMax().z() - spread.copiedMin().z() + 1);
                 helper.assertTrue(spread.copyTicks() >= chunks, "the copy took " + spread.copyTicks() + " ticks for " + chunks + " chunks");

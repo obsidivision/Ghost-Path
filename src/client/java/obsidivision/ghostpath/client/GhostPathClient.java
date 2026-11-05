@@ -37,19 +37,17 @@ public class GhostPathClient implements ClientModInitializer {
             Inspector.render();
         });
         HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "inspector"), (graphics, deltaTracker) -> Inspector.hud(graphics));
+        HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "labels"), (graphics, deltaTracker) -> Labels.hud(graphics));
+        HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "toasts"), (graphics, deltaTracker) -> Toasts.hud(graphics));
         HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "area"), (graphics, deltaTracker) -> AreaRenderer.hud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (TOGGLE.consumeClick()) {
                 PathSettings.showPaths = !PathSettings.showPaths;
-                if (client.player != null) {
-                    client.player.sendOverlayMessage(Component.literal("Flight paths " + (PathSettings.showPaths ? "shown" : "hidden")));
-                }
+                Toasts.show("Flight paths " + (PathSettings.showPaths ? "shown" : "hidden"));
             }
             while (AREA.consumeClick()) {
                 PathSettings.showArea = !PathSettings.showArea;
-                if (client.player != null) {
-                    client.player.sendOverlayMessage(Component.literal("Ghost area " + (PathSettings.showArea ? "shown" : "hidden")));
-                }
+                Toasts.show("Ghost area " + (PathSettings.showArea ? "shown" : "hidden"));
             }
             Tails.tick(Minecraft.getInstance());
             Inspector.tick(Minecraft.getInstance());
