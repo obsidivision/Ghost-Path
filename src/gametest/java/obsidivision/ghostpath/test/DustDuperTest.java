@@ -74,7 +74,7 @@ public class DustDuperTest {
         }
     }
 
-    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_load")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:duper_load")
     public void loaderReadsTheSchematic(GameTestHelper helper) {
         Litematic lit = load();
         LOG.info("[ghostpath] duper: litematic version {} (Litematica), MinecraftDataVersion {} (26.2 is {}), author {}, size {}x{}x{}, {} blocks, {} tile entities, {} entities",
@@ -241,7 +241,7 @@ public class DustDuperTest {
      * Exploration (a finding, see DESIGN): the file has no lever or button. A lever (pulled) on every neighbouring block of every
      * air position next to the machine, on a freshly placed machine, 80 ticks each; prints those that light TNT.
      */
-    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_explore")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:duper_explore")
     public void exploreTriggers(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
@@ -291,7 +291,7 @@ public class DustDuperTest {
      * Exploration: which piston (any of 6 facings) in an air cell next to an observer changes the machine, without moving by
      * itself while the lever is off. Prints idle and pulled results against the unchanged machine.
      */
-    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_piston")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:duper_piston")
     public void explorePistons(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
@@ -350,19 +350,19 @@ public class DustDuperTest {
     }
 
     /** The cells the recording of the real duper is reported on: every number printed in the log is what DESIGN quotes. */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_main")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:duper_main")
     public void recordTheDuper(GameTestHelper helper) {
         recordWith(helper, PISTON_E);
     }
 
     /** The same, with a 2-tick pulse into the lime concrete (3,3,1) instead: the TNT only fall. */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_lime2")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:duper_lime2")
     public void recordLimePulse(GameTestHelper helper) {
         recordWith(helper, LIME_A);
     }
 
     /** The same, from the west piston. */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_west")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:duper_west")
     public void recordWestPiston(GameTestHelper helper) {
         recordWith(helper, PISTON_W);
     }
@@ -486,7 +486,7 @@ public class DustDuperTest {
     }
 
     /** The same pull without the mod: what the recording must agree with. */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:duper_plain")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:duper_plain")
     public void theGameAloneDoesTheSame(GameTestHelper helper) {
         plain(helper, 0);
     }
@@ -495,7 +495,7 @@ public class DustDuperTest {
      * Exploration (user's finding): the machine is started by a 2-tick pulse into a lime concrete block. For each lime block and each
      * free neighbour, an observer with its back against the block is pulsed by placing a stone in front of it; prints what each does.
      */
-    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_lime")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:duper_lime")
     public void exploreLimePulse(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
@@ -536,7 +536,7 @@ public class DustDuperTest {
      * Exploration (the owner's finding): after the east piston's pulse the 10 TNT fly east as a line. A vertical column of stone
      * (z = 1, from the floor to the machine's top) at some distance east is where they should stack.
      */
-    @GameTest(maxTicks = 60000, padding = 8, environment = "ghostpath-gametest:duper_wall")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:duper_wall")
     public void exploreWall(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);
@@ -575,7 +575,7 @@ public class DustDuperTest {
     }
 
     /** The piston added in the real world after the recording: the watch reruns, the real machine stays idle, the prediction changes. */
-    @GameTest(maxTicks = 240000, padding = 24, environment = "ghostpath-gametest:duper_rerun")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:duper_rerun")
     public void aPistonNextToAnObserverChangesTheDuperRerun(GameTestHelper helper) {
         TestSupport.removeBarriers(helper);
         CauseTrackingTest.forceChunks(helper, true);

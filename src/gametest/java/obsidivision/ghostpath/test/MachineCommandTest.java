@@ -94,8 +94,8 @@ public class MachineCommandTest {
     private static void whenIdle(GameTestHelper helper, int waited, Runnable then) {
         if (MachineRecorder.current() == null) {
             then.run();
-        } else if (waited > 3000) {
-            helper.fail("recording did not finish within 3000 ticks");
+        } else if (TestSupport.overRealTime(helper)) {
+            helper.fail("recording did not finish within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
         } else {
             helper.runAfterDelay(1, () -> whenIdle(helper, waited + 1, then));
         }
@@ -110,7 +110,7 @@ public class MachineCommandTest {
         whenIdle(helper, 0, then);
     }
 
-    @GameTest(maxTicks = 20000, padding = 24, environment = "ghostpath-gametest:machine_command")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:machine_command")
     public void pathMachineOnTheCauseMachine(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;

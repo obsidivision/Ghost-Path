@@ -70,7 +70,7 @@ public class RecordingRulesTest {
      * is tagged (dispenser), its AI ticks are chain work and draw from its unseeded random ("inexact: mob AI"), but it
      * never counts as pending: the recording ends once the wool has settled, long before the limit.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:rules_sheep")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_sheep")
     public void shearedSheepWithAiEndsBeforeLimit(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -120,7 +120,7 @@ public class RecordingRulesTest {
      * normal end, tick limit, and a server stop ({@code MachineRecorder.abort}, what SERVER_STOPPING calls; no held save
      * is done then). The weather when the trigger was pressed is in the recording and its summary.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:rules_saving")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_saving")
     public void savingOffDuringRecordingAndWeatherStored(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         MinecraftServer server = level.getServer();
@@ -217,7 +217,7 @@ public class RecordingRulesTest {
      * (tickCount + id) % 4) but gravity is still applied (:129), so its y velocity is -0.04, -0.08, -0.12, and the 4th
      * tick's move resets it. Logs the velocities and checks that no tick had zero velocity.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:rules_item_probe")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_item_probe")
     public void restingItemVelocityProbe(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         floor(helper);
@@ -228,8 +228,9 @@ public class RecordingRulesTest {
             List<String> samples = new ArrayList<>();
             int[] zero = {0};
             int[] grounded = {0};
-            for (int t = 100; t < 140; t++) {
-                helper.runAfterDelay(t, () -> {
+            // one harness callback at a time (TestSupport.eachTick: bulk-scheduled callbacks can be lost)
+            TestSupport.eachTick(helper, 100, 141, t -> {
+                if (t < 140) {
                     Vec3 v = item.getDeltaMovement();
                     if (item.onGround()) {
                         grounded[0]++;
@@ -240,9 +241,8 @@ public class RecordingRulesTest {
                     if (samples.size() < 8) {
                         samples.add(item.onGround() + " " + v);
                     }
-                });
-            }
-            helper.runAfterDelay(141, () -> {
+                }
+            }, () -> {
                 LOG.info("[ghostpath] item probe: 40 ticks after 100, on ground {}, zero velocity {}; first samples {}", grounded[0], zero[0], samples);
                 item.discard();
                 helper.assertTrue(grounded[0] == 40, "item not resting on the ground: " + grounded[0]);
@@ -257,7 +257,7 @@ public class RecordingRulesTest {
      * recording ends once it has been on the ground with its position unchanged (within 1e-6) for 8 ticks, before the
      * limit. Logs how many ticks only counted as unchanged because of the 1e-6 tolerance.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:rules_item_settle")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_item_settle")
     public void droppedItemSettlesBeforeLimit(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -298,7 +298,7 @@ public class RecordingRulesTest {
      * with {@code /path machine}: the same items come out (the item is in each item's ENTITY_STATE), every event is
      * equal, and no unseeded draw is left. Unseeded, the chance that all three choices repeat is (1/5)^3.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:rules_dispenser_slots")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_dispenser_slots")
     public void dispenserSlotChoiceRepeatsExactly(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -363,7 +363,7 @@ public class RecordingRulesTest {
      * recorder loads the chunk again with its restore ticket, restores the lever and the dispenser and removes the TNT
      * that was saved into the chunk, by UUID. Checked after the chunk was unloaded and loaded once more.
      */
-    @GameTest(maxTicks = 400000, environment = "ghostpath-gametest:rules_unloaded_restore") // chunk loads take real time, ticks run at full speed
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:rules_unloaded_restore") // chunk loads take real time, ticks run at full speed
     public void unloadedChunkRestored(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -474,7 +474,7 @@ public class RecordingRulesTest {
      * floor block is gold again (its state just before the chain's first write there, not stone from before the
      * recording), the clock was left alone, and the summary counts both.
      */
-    @GameTest(maxTicks = 20000, padding = 24, environment = "ghostpath-gametest:rules_scoped_restore")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:rules_scoped_restore")
     public void scopedRestoreKeepsNonChainChanges(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;

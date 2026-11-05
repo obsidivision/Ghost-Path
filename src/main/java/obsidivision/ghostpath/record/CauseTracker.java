@@ -111,6 +111,39 @@ public final class CauseTracker {
         }
     }
 
+    /**
+     * Runs {@code body} with chain context off, if this thread is doing chain work now; context is put back afterwards.
+     * Used for {@code BlockableEventLoop.managedBlock} (the server thread waiting, e.g. for a chunk that a chain read
+     * needs: {@code ServerChunkCache.getChunk}, ServerChunkCache.java:166, :219). While it waits, that loop runs whatever
+     * main-thread work is queued: chunk promotions with their block entities and world-gen entities, distance-manager
+     * updates. None of it is the chain's, and what is queued at that moment depends on how far the asynchronous chunk
+     * work has got. Run as chain work, each entity built there took a chain construction index (the id residue of the
+     * chain's later entities, {@link #chainEntityId}) and a chain-stream draw (its own random's seed), so everything the
+     * chain drew afterwards moved: the order of an explosion's drops changed between two runs of the same machine.
+     */
+    public static void outsideChain(Runnable body) {
+        CauseTracker t = active;
+        if (t == null || t.depth == 0 || Thread.currentThread() != t.thread) {
+            body.run();
+            return;
+        }
+        int saved = t.depth;
+        t.depth = 0;
+        if (t.chainWaits++ == 0) {
+            LOGGER.info("[ghostpath] chain work waits for the server (a chunk load); main-thread tasks run meanwhile are not chain work");
+        }
+        try {
+            body.run();
+        } finally {
+            t.depth = saved;
+        }
+    }
+
+    /** How often chain work waited in {@code managedBlock} (see {@link #outsideChain}). */
+    public int chainWaits() {
+        return this.chainWaits;
+    }
+
     /** The random a redirected site should use: the chain stream during chain work in the tracked level, else vanilla's. */
     public static RandomSource randomFor(Level level, RandomSource vanilla) {
         CauseTracker t = active;
@@ -124,6 +157,7 @@ public final class CauseTracker {
     private final boolean kick;
     private int depth;
     private int entitiesConstructed;
+    private int chainWaits;
     /** Index for the next tagged entity; not the map size, since entities that leave the dimension leave the map. */
     private int nextEntityIndex;
 

@@ -26,7 +26,7 @@ import org.slf4j.LoggerFactory;
 public class GhostDiskTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
 
-    @GameTest(maxTicks = 40000, padding = 24, environment = "ghostpath-gametest:ghost_disk")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghost_disk")
     public void aChunkFromTheSaveStopsATntLikeALoadedOne(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos origin = helper.absolutePos(BlockPos.ZERO);
@@ -72,8 +72,8 @@ public class GhostDiskTest {
         polls[0]++;
         try {
             if (!prepared.poll()) {
-                if (polls[0] > 3000) {
-                    throw new IllegalStateException("the ghost chunks were not ready after 3000 polls");
+                if (TestSupport.overRealTime(helper)) {
+                    throw new IllegalStateException("the ghost chunks were not ready within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
                 }
                 helper.runAfterDelay(1, () -> poll(helper, level, ghost, prepared, a, b, polls, realTnt, wallX, chest));
                 return;
@@ -138,7 +138,7 @@ public class GhostDiskTest {
         }
         if (ok) {
             then.run();
-        } else if (waited > 30000) {
+        } else if (TestSupport.overRealTime(helper)) {
             helper.fail("chunks not loaded");
         } else {
             helper.runAfterDelay(1, () -> whenLoaded(helper, level, a, b, waited + 1, then));

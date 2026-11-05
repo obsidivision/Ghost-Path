@@ -5,6 +5,7 @@
   "mixins": [
     "AbstractArrowAccessor",
     "BlockAndLightGetterMixin",
+    "BlockableEventLoopMixin",
     "BlockCollisionsMixin",
     "BlockDropMixin",
     "BlockEntityMixin",

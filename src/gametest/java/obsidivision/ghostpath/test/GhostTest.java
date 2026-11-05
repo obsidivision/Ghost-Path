@@ -44,7 +44,7 @@ public class GhostTest {
      * pending tick count in the chain must match on every tick, and the lamp at the end must light and go out on the
      * same game tick in both. Light above the lamp is compared too and logged (DESIGN step 2, light).
      */
-    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:ghost_repeater")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghost_repeater")
     public void repeaterChainCopiedMidPulseFiresOnSameTick(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper);
@@ -134,7 +134,7 @@ public class GhostTest {
      * velocities (exact doubles) and tick-list order; the weather timers and rain level match. Then both are ticked
      * side by side for 40 ticks and every entity's position and velocity must stay bit-identical.
      */
-    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:ghost_entities")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghost_entities")
     public void entitiesAndWeatherCopiedExactly(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper);
@@ -255,7 +255,7 @@ public class GhostTest {
      * they never saw it. A poll now runs the ghost's pending tasks for a few milliseconds: the copy of a 3x3 chunk area must be
      * ready within a few dozen polls (ticks; about 42 here). With one task per poll it was not ready after 3000 (break-it checked).
      */
-    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:ghost_poll")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghost_poll")
     public void ghostChunksAreReadyWithinAFewPolls(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         ChunkRect rect = ChunkRect.around(helper, new BlockPos(0, 0, 0), new BlockPos(4, 0, 4));
@@ -289,7 +289,7 @@ public class GhostTest {
             LOG.info("[ghostpath] ghost chunks ready after {} polls (one per tick)", polls[0]);
             helper.assertTrue(polls[0] <= 150, "the ghost chunks needed " + polls[0] + " polls (one per server tick); at 20 ticks a second the wait limit (20 s) is 400, and the old one-task-per-poll code did not finish in 3000");
             helper.succeed();
-        } else if (polls[0] > 3000) {
+        } else if (TestSupport.overRealTime(helper)) {
             ghost.discard();
             rect.force(helper.getLevel(), false);
             helper.fail("the ghost chunks were not ready after " + polls[0] + " polls");

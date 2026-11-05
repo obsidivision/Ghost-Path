@@ -49,6 +49,18 @@ public class CauseTrackingTest {
         forceChunks(helper, forced, BlockPos.ZERO);
     }
 
+    /** The block box of the chunks {@link #forceChunks} forces, full height. */
+    static net.minecraft.world.phys.AABB forcedBox(GameTestHelper helper, BlockPos off) {
+        BlockPos min = helper.absolutePos(new BlockPos(-8, 0, -8).offset(off));
+        BlockPos max = helper.absolutePos(new BlockPos(22, 0, 14).offset(off));
+        int x0 = (Math.min(min.getX(), max.getX()) >> 4) << 4;
+        int z0 = (Math.min(min.getZ(), max.getZ()) >> 4) << 4;
+        int x1 = ((Math.max(min.getX(), max.getX()) >> 4) << 4) + 16;
+        int z1 = ((Math.max(min.getZ(), max.getZ()) >> 4) << 4) + 16;
+        ServerLevel level = helper.getLevel();
+        return new net.minecraft.world.phys.AABB(x0, level.getMinY(), z0, x1, level.getMaxY(), z1);
+    }
+
     /** Same, for the machine built at {@code off} (relative to the test structure). */
     static void forceChunks(GameTestHelper helper, boolean forced, BlockPos off) {
         BlockPos min = helper.absolutePos(new BlockPos(-8, 0, -8).offset(off));
@@ -56,6 +68,11 @@ public class CauseTrackingTest {
         for (int cx = Math.min(min.getX(), max.getX()) >> 4; cx <= Math.max(min.getX(), max.getX()) >> 4; cx++) {
             for (int cz = Math.min(min.getZ(), max.getZ()) >> 4; cz <= Math.max(min.getZ(), max.getZ()) >> 4; cz++) {
                 helper.getLevel().setChunkForced(cx, cz, forced);
+                if (forced) {
+                    TestSupport.noteForced(helper, cx, cz);
+                } else {
+                    TestSupport.noteUnforced(helper, cx, cz);
+                }
             }
         }
     }
@@ -65,6 +82,8 @@ public class CauseTrackingTest {
      * chunk and entity-section loading, which takes real time, while game tests tick at full speed (no 50 ms sleep): the
      * wait can be thousands of ticks, hence the large maxTicks (seen: >800 once).
      */
+    private static final java.util.Map<GameTestHelper, Integer> CORNERS_READY_AT = java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
     static void whenEntityTicking(GameTestHelper helper, Runnable then) {
         whenEntityTicking(helper, BlockPos.ZERO, then, 0);
     }
@@ -78,8 +97,13 @@ public class CauseTrackingTest {
         for (BlockPos rel : List.of(new BlockPos(0, 2, 0), new BlockPos(14, 2, 0), new BlockPos(0, 2, 6), new BlockPos(14, 2, 6), TNT)) {
             ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(rel.offset(off)));
         }
+        if (ready && CORNERS_READY_AT.putIfAbsent(helper, waited) == null) {
+            LOG.info("[ghostpath] machine corners entity-ticking after {} ticks; all forced chunks: {}", waited, TestSupport.forcedChunksTicking(helper));
+        }
+        ready &= TestSupport.forcedChunksTicking(helper);
         if (ready) {
-            LOG.info("[ghostpath] machine area entity-ticking after {} ticks", waited);
+            LOG.info("[ghostpath] machine area entity-ticking after {} ticks ({} after the corners); other tests' entities removed from the forced chunks: {}", waited,
+                waited - CORNERS_READY_AT.getOrDefault(helper, waited), TestSupport.clearForeignEntities(helper));
             then.run();
         } else {
             helper.runAfterDelay(1, () -> whenEntityTicking(helper, off, then, waited + 1));
@@ -134,7 +158,7 @@ public class CauseTrackingTest {
      * line the whole time. It writes blocks and schedules ticks every few ticks during the recording, but none of that
      * may enter the chain: no read, no write, no event at any clock position.
      */
-    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:cause_clock")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:cause_clock")
     public void unrelatedClockNeverInFootprint(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);
@@ -203,7 +227,7 @@ public class CauseTrackingTest {
      * every tick (the primed TNT and the items the blast drops), and every unseeded draw. Item drop positions and the
      * items' own randoms are seeded (1b follow-up ruling), so items must repeat exactly too.
      */
-    @GameTest(maxTicks = 12000, padding = 24, environment = "ghostpath-gametest:cause_seed")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:cause_seed")
     public void seededChainRepeatsExactly(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildMachine(helper);
@@ -222,7 +246,14 @@ public class CauseTrackingTest {
             for (int i = 0; i < Math.max(a.size(), b.size()); i++) {
                 String x = i < a.size() ? a.get(i) : "<end>";
                 String y = i < b.size() ? b.get(i) : "<end>";
-                helper.assertTrue(x.equals(y), "runs differ at event " + i + ":\n  run 1: " + x + "\n  run 2: " + y);
+                if (!x.equals(y)) {
+                    helper.fail("runs differ at event " + i + ":\n  run 1: " + x + "\n  run 2: " + y
+                        + "\n  tagged in run 1: " + a.stream().filter(s -> s.contains("ENTITY_TAGGED")).toList()
+                        + "\n  tagged in run 2: " + b.stream().filter(s -> s.contains("ENTITY_TAGGED")).toList()
+                        + "\n  unseeded draws run 1: " + a.stream().filter(s -> s.contains("UNSEEDED_DRAW")).count()
+                        + ", run 2: " + b.stream().filter(s -> s.contains("UNSEEDED_DRAW")).count()
+                        + "\n  entities in the forced area now: " + TestSupport.describeEntities(level, forcedBox(helper, BlockPos.ZERO)));
+                }
             }
             helper.assertTrue(a.stream().noneMatch(s -> s.contains("WARNING: not allowed")),
                 "unseeded draw not on the allowlist: " + a.stream().filter(s -> s.contains("WARNING")).findFirst().orElse(""));
@@ -320,6 +351,58 @@ public class CauseTrackingTest {
             }
             helper.succeed();
         });
+    }
+
+    /**
+     * Found by the flaky seed test (DESIGN "Flaky tests classified"): a chain read of a chunk that is not loaded blocks the
+     * server thread in {@code BlockableEventLoop.managedBlock}, which runs the chunk cache's queued main-thread tasks
+     * meanwhile. Here a task that builds an item entity is queued on that executor (it always queues,
+     * {@code ServerChunkCache.MainThreadExecutor.scheduleExecutables} :612-614), then chain work reads a chunk that was
+     * never generated. The task must run during that read (else the test proves nothing) and must not be chain work: the
+     * entity not tagged, no chain construction index used, the chain stream not drawn from.
+     */
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:cause_wait")
+    public void tasksRunWhileChainWorkWaitsForAChunkAreNotChainWork(GameTestHelper helper) throws ReflectiveOperationException {
+        ServerLevel level = helper.getLevel();
+        BlockPos here = helper.absolutePos(new BlockPos(1, 2, 1));
+        // a chunk far from everything, never generated in this world (the world is reused between runs: pick one at random)
+        int far = 20000 + level.getRandom().nextInt(100000);
+        BlockPos away = here.offset(far, 0, far);
+        helper.assertTrue(level.getChunkSource().getChunkNow(away.getX() >> 4, away.getZ() >> 4) == null, "the far chunk is loaded already");
+        java.lang.reflect.Field f = net.minecraft.server.level.ServerChunkCache.class.getDeclaredField("mainThreadProcessor");
+        f.setAccessible(true);
+        java.util.concurrent.Executor chunkExecutor = (java.util.concurrent.Executor) f.get(level.getChunkSource());
+        net.minecraft.world.entity.item.ItemEntity[] built = new net.minecraft.world.entity.item.ItemEntity[1];
+        boolean[] ranDuringRead = {false};
+        boolean[] reading = {false};
+        CauseTracker tracker = CauseTracker.begin(level, SEED);
+        long expected = net.minecraft.util.RandomSource.create(SEED).nextLong();
+        long drawn;
+        try {
+            chunkExecutor.execute(() -> {
+                ranDuringRead[0] = reading[0];
+                built[0] = new net.minecraft.world.entity.item.ItemEntity(level, here.getX() + 0.5, here.getY(), here.getZ() + 0.5,
+                    new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.STICK));
+            });
+            long[] out = new long[1];
+            tracker.runAsChain(() -> {
+                reading[0] = true;
+                level.getBlockState(away); // loads (generates) the chunk: managedBlock, which runs the queued task
+                reading[0] = false;
+                out[0] = CauseTracker.randomFor(level, level.getRandom()).nextLong(); // the chain stream's first draw
+            });
+            drawn = out[0];
+        } finally {
+            tracker.end();
+        }
+        LOG.info("[ghostpath] chain wait: task ran during the read {}, entity built {}, chain waits {}, tagged {}, chain stream first draw ok {}",
+            ranDuringRead[0], built[0] != null, tracker.chainWaits(), built[0] != null && tracker.isChainEntity(built[0]), drawn == expected);
+        helper.assertTrue(built[0] != null && ranDuringRead[0], "the queued task did not run while the chain read waited for the chunk: the test proves nothing");
+        helper.assertTrue(!tracker.isChainEntity(built[0]) && tracker.events().stream().noneMatch(e -> e.kind() == ChainEvent.Kind.ENTITY_TAGGED),
+            "an entity built by a task run during the wait became chain work: " + tracker.events());
+        helper.assertTrue(drawn == expected, "the chain stream was drawn from by the task run during the wait (the entity's own random was seeded from it)");
+        helper.assertTrue(tracker.chainWaits() > 0, "the wait was not seen");
+        helper.succeed();
     }
 
     static void report(String name, CauseTracker tracker) {

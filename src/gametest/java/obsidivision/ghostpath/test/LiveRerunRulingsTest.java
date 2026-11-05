@@ -52,7 +52,7 @@ public class LiveRerunRulingsTest {
      * tick, and the chat line says "real lever is on; prediction is for off → on". Without the ruling the ghost's lever
      * (on, as copied) would be pulled off and the ghost would do nothing.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_press")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_press")
     public void rerunPredictsTheRecordedPress(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         LiveRerunTest.build(helper);
@@ -113,7 +113,7 @@ public class LiveRerunRulingsTest {
      * contents change by setItem (a feather): a change; the rerun drops the feather. Then removeItem, setItem and
      * removeItemNoUpdate on it: three more changes; the rerun drops nothing.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_contents")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_contents")
     public void containerContentsAreFootprintChanges(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildDropper(helper, level);
@@ -201,7 +201,7 @@ public class LiveRerunRulingsTest {
      * back and forth by 0.15 for 30 ticks: not a change. Then it is put half a block east and left: after 8 ticks it has
      * settled at a new place: a change, a rerun. Then it is removed: a change, a rerun. The counters say which rule fired.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_entities")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_entities")
     public void entityChangesCountAndMovementDoesNot(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         buildDropper(helper, level);

@@ -39,7 +39,7 @@ public class FootprintVariationTest {
         return out;
     }
 
-    @GameTest(maxTicks = 20000, padding = 24, environment = "ghostpath-gametest:variation")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:variation")
     public void sameMachine32BlocksApart(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         CauseTrackingTest.buildMachine(helper, OFFSET_A, false);

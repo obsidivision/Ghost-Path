@@ -62,18 +62,20 @@ public class LazyCoreTest {
     private static void when(GameTestHelper helper, java.util.function.BooleanSupplier cond, int waited, Runnable then) {
         if (cond.getAsBoolean()) {
             then.run();
-        } else if (waited > 300000) {
+        } else if (TestSupport.overRealTime(helper)) {
             helper.fail("chunks not ready");
         } else {
             helper.runAfterDelay(1, () -> when(helper, cond, waited + 1, then));
         }
     }
 
-    @GameTest(maxTicks = 400000, environment = "ghostpath-gametest:lazy_core_check")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:lazy_core_check")
     public void aProjectileThatEntersALazyChunkFreezesAndTheGhostCheckIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
-        PathSettings.tickLimit = 40;
+        // the limit goes to MachineRecorder.start directly: setting PathSettings.tickLimit here leaked into every later
+        // recording test (cause_machine_ghost_is_exact stopped at t+39, 'too little compared')
+        int limit = 40;
         BlockPos base = helper.absolutePos(BlockPos.ZERO).offset(1700, 0, -1700);
         ChunkPos a = new ChunkPos(base.getX() >> 4, base.getZ() >> 4);
         ChunkPos b = new ChunkPos(a.x() + 1, a.z());
@@ -98,7 +100,7 @@ public class LazyCoreTest {
                 Recording[] out = new Recording[1];
                 String[] failed = new String[1];
                 try {
-                    MachineRecorder.start(level, lever, PathSettings.tickLimit, PathSettings.kick, new MachineRecorder.Listener() {
+                    MachineRecorder.start(level, lever, limit, PathSettings.kick, new MachineRecorder.Listener() {
                         @Override
                         public void done(Recording recording) {
                             out[0] = recording;
@@ -139,7 +141,7 @@ public class LazyCoreTest {
     private static void waitIdle(GameTestHelper helper, int waited, Runnable then) {
         if (MachineRecorder.current() == null) {
             then.run();
-        } else if (waited > 6000) {
+        } else if (TestSupport.overRealTime(helper)) {
             helper.fail("recording did not finish");
         } else {
             helper.runAfterDelay(1, () -> waitIdle(helper, waited + 1, then));
@@ -155,7 +157,7 @@ public class LazyCoreTest {
         return e;
     }
 
-    @GameTest(maxTicks = 400000, environment = "ghostpath-gametest:lazy_core_widen")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:lazy_core_widen")
     public void widenedRunKeepsTheCoreLazyChunkFrozen(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos base = helper.absolutePos(BlockPos.ZERO).offset(-1700, 0, 1700);
@@ -190,7 +192,7 @@ public class LazyCoreTest {
         boolean[] more = {false};
         try {
             if (!prepared.poll()) {
-                helper.assertTrue(polls < 3000, "the ghost chunks were not ready: " + prepared.describeNotReady());
+                helper.assertTrue(!TestSupport.overRealTime(helper), "the ghost chunks were not ready: " + prepared.describeNotReady());
                 more[0] = true;
                 helper.runAfterDelay(1, () -> poll(helper, level, ghost, prepared, a, b, c, pb, pc, pbStart, pcStart, polls + 1));
                 return;

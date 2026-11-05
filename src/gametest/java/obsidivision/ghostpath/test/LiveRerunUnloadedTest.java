@@ -34,12 +34,12 @@ public class LiveRerunUnloadedTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
     private static final int LINE_END = 82;
 
-    @GameTest(maxTicks = 600000, padding = 24, environment = "ghostpath-gametest:live_rerun_unloaded")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_unloaded")
     public void widenReachesUnloadedChunks(GameTestHelper helper) {
         run(helper, true);
     }
 
-    @GameTest(maxTicks = 600000, padding = 24, environment = "ghostpath-gametest:live_rerun_unloaded_off")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_unloaded_off")
     public void beyondLoadedOffDoesNotReadTheSave(GameTestHelper helper) {
         run(helper, false);
     }
@@ -102,7 +102,7 @@ public class LiveRerunUnloadedTest {
         }
         if (gone) {
             then.run();
-        } else if (waited > 400000) {
+        } else if (TestSupport.overRealTime(helper)) {
             LiveRerunTest.finish(helper);
             helper.fail("the far chunks did not unload");
         } else {

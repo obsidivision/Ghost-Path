@@ -27,7 +27,7 @@ import org.slf4j.LoggerFactory;
 public class GhostDiskEntitiesTest {
     private static final Logger LOG = LoggerFactory.getLogger("ghostpath-test");
 
-    @GameTest(maxTicks = 40000, padding = 24, environment = "ghostpath-gametest:ghost_disk_entities")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghost_disk_entities")
     public void entitiesOfAChunkFromTheSaveAreInTheGhost(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos origin = helper.absolutePos(BlockPos.ZERO);
@@ -58,11 +58,17 @@ public class GhostDiskEntitiesTest {
     private static void run(GameTestHelper helper, ServerLevel level, BlockPos origin, ChunkPos a, ChunkPos b) {
         int y = origin.getY() + 3;
         double zc = a.getMinBlockZ() + 8.5;
-        tnt(level, a.getMinBlockX() + 4.5, y, zc, 300);
-        item(level, a.getMinBlockX() + 6.5, y, zc);
+        inA = List.of(tnt(level, a.getMinBlockX() + 4.5, y, zc, 300).getUUID(), item(level, a.getMinBlockX() + 6.5, y, zc).getUUID());
         PrimedTnt tb = tnt(level, b.getMinBlockX() + 4.5, y, zc, 250);
         ItemEntity ib = item(level, b.getMinBlockX() + 6.5, y, zc);
         level.save(null, true, false); // chunks and entities to disk (ServerLevel.java:873-891; ServerChunkCache.save alone leaves the entities)
+        // what B really holds at the save: the game-test world is shared, and B (next to the structure's chunk) can hold
+        // entities other tests left there (seen: 15 items), so the ghost is compared with this, not with "one of each"
+        savedInB = uuids(level, boxOf(level, b));
+        // positions at the save: the real entities go on ticking while the ghost chunks load (how long depends on the
+        // machine: seen, the real item 3 blocks away by then), so the ghost is compared with these, not with "now"
+        savedTntPos = tb.position();
+        savedItemPos = ib.position();
         GhostLevel ghost;
         GhostCopy.Prepared prepared;
         try {
@@ -79,8 +85,8 @@ public class GhostDiskEntitiesTest {
         polls[0]++;
         try {
             if (!prepared.poll()) {
-                if (polls[0] > 3000) {
-                    throw new IllegalStateException("the ghost chunks were not ready after 3000 polls");
+                if (TestSupport.overRealTime(helper)) {
+                    throw new IllegalStateException("the ghost chunks were not ready within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
                 }
                 helper.runAfterDelay(1, () -> poll(helper, level, ghost, prepared, a, b, polls, realTnt, realItem));
                 return;
@@ -89,24 +95,26 @@ public class GhostDiskEntitiesTest {
             LOG.info("[ghostpath] ghost entities from the save: {}", report.lines());
             AABB boxB = new AABB(b.getMinBlockX(), level.getMinY(), b.getMinBlockZ(), b.getMaxBlockX() + 1.0, level.getMaxY(), b.getMaxBlockZ() + 1.0);
             AABB boxA = new AABB(a.getMinBlockX(), level.getMinY(), a.getMinBlockZ(), a.getMaxBlockX() + 1.0, level.getMaxY(), a.getMaxBlockZ() + 1.0);
-            List<PrimedTnt> tntB = ghost.getEntitiesOfClass(PrimedTnt.class, boxB);
-            List<ItemEntity> itemB = ghost.getEntitiesOfClass(ItemEntity.class, boxB);
-            helper.assertTrue(tntB.size() == 1, "TNT in B in the ghost: " + tntB.size() + " (0: not read from the save, 2: also copied from memory)");
-            helper.assertTrue(itemB.size() == 1, "items in B in the ghost: " + itemB.size());
-            helper.assertTrue(ghost.getEntitiesOfClass(PrimedTnt.class, boxA).size() == 1 && ghost.getEntitiesOfClass(ItemEntity.class, boxA).size() == 1, "A's entities were not copied from memory");
+            List<PrimedTnt> tntB = ghost.getEntitiesOfClass(PrimedTnt.class, boxB, e -> e.getUUID().equals(realTnt.getUUID()));
+            List<ItemEntity> itemB = ghost.getEntitiesOfClass(ItemEntity.class, boxB, e -> e.getUUID().equals(realItem.getUUID()));
+            helper.assertTrue(tntB.size() == 1, "the test's TNT in B in the ghost: " + tntB.size() + " (0: not read from the save, 2: also copied from memory)");
+            helper.assertTrue(itemB.size() == 1, "the test's item in B in the ghost: " + itemB.size());
+            List<java.util.UUID> ghostB = uuids(ghost, boxB);
+            helper.assertTrue(ghostB.size() == savedInB.size() && new java.util.HashSet<>(ghostB).equals(new java.util.HashSet<>(savedInB)),
+                "B's entities in the ghost are not those saved (once each): ghost " + ghostB.size() + ", saved " + savedInB.size());
+            helper.assertTrue(uuids(ghost, boxA).stream().filter(inA::contains).count() == 2, "A's entities were not copied from memory");
             PrimedTnt g = tntB.getFirst();
             // the saved state (the real TNT went on ticking while the ghost chunks loaded): the fuse it had when it was saved, the same place
-            helper.assertTrue(g.getFuse() == 250 && g.position().equals(realTnt.position()), "TNT from the save: fuse " + g.getFuse() + " at " + g.position()
-                + ", saved with fuse 250 at " + realTnt.position());
-            // the item stack as saved; the position only roughly (a real item may have been nudged by the other entity while the ghost chunks loaded)
-            helper.assertTrue(itemB.getFirst().getItem().is(Items.DIAMOND) && itemB.getFirst().getItem().getCount() == 5 && itemB.getFirst().position().distanceTo(realItem.position()) < 1.0,
-                "item from the save: " + itemB.getFirst().getItem() + " at " + itemB.getFirst().position() + ", real item at " + realItem.position());
+            helper.assertTrue(g.getFuse() == 250 && g.position().equals(savedTntPos), "TNT from the save: fuse " + g.getFuse() + " at " + g.position()
+                + ", saved with fuse 250 at " + savedTntPos);
+            // the item stack and the position as saved
+            helper.assertTrue(itemB.getFirst().getItem().is(Items.DIAMOND) && itemB.getFirst().getItem().getCount() == 5 && itemB.getFirst().position().equals(savedItemPos),
+                "item from the save: " + itemB.getFirst().getItem() + " at " + itemB.getFirst().position() + ", saved at " + savedItemPos + ", real item now at " + realItem.position());
             // the ghost ticks them like any other entity: the fuse runs down
             for (int i = 0; i < 10; i++) {
                 ghost.tickGhost();
             }
-            helper.assertTrue(ghost.getEntitiesOfClass(PrimedTnt.class, boxB).getFirst().getFuse() == 240, "the fuse of the TNT from the save did not run: "
-                + ghost.getEntitiesOfClass(PrimedTnt.class, boxB).getFirst().getFuse());
+            helper.assertTrue(tntB.getFirst().getFuse() == 240, "the fuse of the TNT from the save did not run: " + tntB.getFirst().getFuse());
             ghost.discard();
             release(level, a, b);
             realTnt.discard();
@@ -117,6 +125,20 @@ public class GhostDiskEntitiesTest {
             release(level, a, b);
             throw e;
         }
+    }
+
+    private static List<java.util.UUID> savedInB = List.of();
+    private static List<java.util.UUID> inA = List.of();
+    private static net.minecraft.world.phys.Vec3 savedTntPos = net.minecraft.world.phys.Vec3.ZERO;
+    private static net.minecraft.world.phys.Vec3 savedItemPos = net.minecraft.world.phys.Vec3.ZERO;
+
+    private static AABB boxOf(ServerLevel level, ChunkPos c) {
+        return new AABB(c.getMinBlockX(), level.getMinY(), c.getMinBlockZ(), c.getMaxBlockX() + 1.0, level.getMaxY(), c.getMaxBlockZ() + 1.0);
+    }
+
+    private static List<java.util.UUID> uuids(ServerLevel level, AABB box) {
+        return level.getEntities((net.minecraft.world.entity.Entity) null, box, e -> !(e instanceof net.minecraft.world.entity.player.Player)).stream()
+            .map(net.minecraft.world.entity.Entity::getUUID).toList();
     }
 
     private static void release(ServerLevel level, ChunkPos a, ChunkPos b) {
@@ -131,7 +153,7 @@ public class GhostDiskEntitiesTest {
         }
         if (ok) {
             then.run();
-        } else if (waited > 30000) {
+        } else if (TestSupport.overRealTime(helper)) {
             helper.fail("chunks not loaded");
         } else {
             helper.runAfterDelay(1, () -> whenLoaded(helper, level, a, b, waited + 1, then));

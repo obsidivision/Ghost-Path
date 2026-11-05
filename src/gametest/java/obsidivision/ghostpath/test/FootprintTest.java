@@ -45,7 +45,7 @@ public class FootprintTest {
      * A chain TNT flies into a glass wall. The wall is read only by entity collision, which reads the chunk directly
      * (BlockCollisions.java:89), so it is in the footprint only through the BlockCollisions hook (DESIGN finding 3).
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:footprint_collision")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:footprint_collision")
     public void collisionReadsInFootprint(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper);
@@ -90,7 +90,7 @@ public class FootprintTest {
      * must record "no collision: chunk below FULL". Chunks around the test keep loading asynchronously, so the first
      * chunk below FULL is picked at launch time, and an event for it or a chunk further out is accepted.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:footprint_below_full")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:footprint_below_full")
     public void noCollisionBelowFullRecorded(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper); // otherwise the shell at x = 8 stops the TNT, not the wall

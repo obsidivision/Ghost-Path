@@ -157,7 +157,7 @@ public class FlightPreviewTest {
      * is added: during the whole rerun the published snapshot does not change; when it is done a new one ("rerun", a higher
      * serial) is there, built from the prediction, with the earlier spawn tick.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:flight_handoff")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:flight_handoff")
     public void snapshotsAreHandedOverWhenARunIsDone(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 1;
@@ -217,7 +217,7 @@ public class FlightPreviewTest {
      * A dispenser shoots an arrow straight up and the recording is limited to 10 ticks: the arrow is still flying, so its
      * line ends "limit" and carries a tail, the arrow's saved state at that moment (its Pos is the line's last point).
      */
-    @GameTest(maxTicks = 12000, padding = 8, environment = "ghostpath-gametest:flight_tail")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_tail")
     public void aProjectileStillFlyingKeepsATail(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -266,7 +266,7 @@ public class FlightPreviewTest {
      * "hit block" at the wall's face, with no tail (it did not keep flying). Also an egg thrown into open air for 10 ticks is
      * not needed here; the "limit" case is the test above.
      */
-    @GameTest(maxTicks = 12000, padding = 8, environment = "ghostpath-gametest:flight_hit")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_hit")
     public void aProjectileThatHitsABlockEndsThere(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -316,7 +316,7 @@ public class FlightPreviewTest {
      * tick limit helps (the default 2000): the recording ends 8 ticks after the arrow stuck instead of waiting for its despawn
      * (1200 ticks), and the path ends where it hit, "stuck".
      */
-    @GameTest(maxTicks = 12000, padding = 8, environment = "ghostpath-gametest:flight_hit")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_hit")
     public void aStuckArrowIsSettled(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;

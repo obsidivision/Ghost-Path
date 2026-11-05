@@ -79,7 +79,7 @@ public class ChainGapsTest {
      * entity), so the hopper joins the chain and its later moves into the chest are chain work. pending() counts it while
      * its cooldown is above 0 and for 8 ticks after the chest last changed. Undo puts everything back.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_hopper_state")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_hopper_state")
     public void hopperEnabledByChainIsChainWork(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos chestRel = new BlockPos(2, 2, 2);
@@ -99,17 +99,18 @@ public class ChainGapsTest {
             guarded(tracker, undo, () -> tracker.runAsChain(() -> helper.setBlock(powerRel, Blocks.AIR)));
             int[] maxBusy = {0};
             int[] lastBusyTick = {-1};
-            for (int t = 1; t <= 45; t++) {
-                int tick = t;
-                helper.runAfterDelay(t, () -> guarded(tracker, undo, () -> {
-                    int busy = tracker.pending().blockEntities();
-                    maxBusy[0] = Math.max(maxBusy[0], busy);
-                    if (busy > 0) {
-                        lastBusyTick[0] = tick;
-                    }
-                }));
-            }
-            helper.runAfterDelay(46, () -> guarded(tracker, undo, () -> {
+            // one harness callback at a time (TestSupport.eachTick: bulk-scheduled callbacks can be lost)
+            TestSupport.eachTick(helper, 1, 46, tick -> {
+                if (tick <= 45) {
+                    guarded(tracker, undo, () -> {
+                        int busy = tracker.pending().blockEntities();
+                        maxBusy[0] = Math.max(maxBusy[0], busy);
+                        if (busy > 0) {
+                            lastBusyTick[0] = tick;
+                        }
+                    });
+                }
+            }, () -> guarded(tracker, undo, () -> {
                 ChestBlockEntity chestBe = (ChestBlockEntity) level.getBlockEntity(chest);
                 int moved = chestBe.countItem(Items.DIAMOND);
                 CauseTracker.Pending pending = tracker.pending();
@@ -137,7 +138,7 @@ public class ChainGapsTest {
      * pending() for a hopper on cooldown: a chain-enabled hopper feeds 3 seeds into a composter, which has no block
      * entity, so after t+8 nothing but the hopper's own transfer cooldown (moves at about t+1, 9, 17) can keep it pending.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_hopper_cooldown")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_hopper_cooldown")
     public void hopperCooldownKeepsPending(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos hopperRel = new BlockPos(2, 3, 2);
@@ -172,7 +173,7 @@ public class ChainGapsTest {
      * blocks away schedules the vibration, joins the chain, and its activation and its output (a lamp beside it) are
      * chain work.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_vibration")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_vibration")
     public void chainPistonTriggersSculkSensor(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         for (int x = 0; x < 8; x++) {
@@ -213,7 +214,7 @@ public class ChainGapsTest {
     // ---- 5: items ----------------------------------------------------------------------------------------------------
 
     /** A chain item (1 stone) merges into a resting non-chain item (10 stone): the receiving item joins the chain. */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_item_merge")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_item_merge")
     public void chainItemMergeTagsReceiver(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         for (int x = 0; x < 5; x++) {
@@ -251,7 +252,7 @@ public class ChainGapsTest {
      * pickup is the hopper's own tick, HopperBlockEntity.suckInItems). The hopper joins the chain; its move into the chest
      * below is chain work.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_hopper_pickup")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_hopper_pickup")
     public void hopperPickingUpChainItemIsChainWork(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos chestRel = new BlockPos(2, 2, 2);
@@ -290,7 +291,7 @@ public class ChainGapsTest {
      * Two chain-powered dispensers: shears at a sheep, an iron helmet at an armor stand. Both targets join the chain,
      * and the undo log restores both (the changes go through no other hooked method).
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_dispenser")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_dispenser")
     public void dispenserChangesTagTarget(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         for (int x = 0; x < 5; x++) {
@@ -340,7 +341,7 @@ public class ChainGapsTest {
      * counts them as gone, and they are listed as not followed. The world is kept between runs, so leftovers from an
      * earlier run are cleared first.
      */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_unload")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_unload")
     public void unloadedChainThingsLogged(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         BlockPos base = helper.absolutePos(BlockPos.ZERO).offset(1600, 0, 1600);
@@ -398,7 +399,7 @@ public class ChainGapsTest {
     // ---- 8: change of dimension --------------------------------------------------------------------------------
 
     /** A chain TNT is teleported to the nether by chain work: "left dimension" is logged and neither copy is followed. */
-    @GameTest(maxTicks = 12000, environment = "ghostpath-gametest:gap_dimension")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, environment = "ghostpath-gametest:gap_dimension")
     public void leftDimensionNotFollowed(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         ServerLevel nether = level.getServer().getLevel(Level.NETHER);
