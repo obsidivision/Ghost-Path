@@ -8,8 +8,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.ButtonBlock;
-import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.ghost.GhostCopy;
@@ -17,6 +15,7 @@ import obsidivision.ghostpath.ghost.GhostLevel;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.MachineRecorder;
 import obsidivision.ghostpath.record.Recording;
+import obsidivision.ghostpath.record.Triggers;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -177,22 +176,11 @@ final class Rerun {
         if (!real.is(wanted.getBlock())) {
             return "trigger is now " + real.getBlock().getName().getString();
         }
-        return wanted.getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " is " + state(real, wanted);
-    }
-
-    private static String state(BlockState s, BlockState like) {
-        if (like.getBlock() instanceof LeverBlock) {
-            return s.getValue(LeverBlock.POWERED) ? "on" : "off";
-        }
-        return s.getValue(ButtonBlock.POWERED) ? "pressed" : "not pressed";
+        return wanted.getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " is " + Triggers.stateText(real);
     }
 
     private static String after(BlockState before) {
-        if (before.getBlock() instanceof LeverBlock) {
-            boolean on = before.getValue(LeverBlock.POWERED);
-            return (on ? "on" : "off") + " \u2192 " + (on ? "off" : "on");
-        }
-        return "not pressed \u2192 pressed";
+        return Triggers.pressText(before);
     }
 
     private void finish(CauseTracker t) {

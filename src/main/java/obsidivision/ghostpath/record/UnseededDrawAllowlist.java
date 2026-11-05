@@ -17,7 +17,13 @@ public final class UnseededDrawAllowlist {
     private static final Map<String, String> ALLOWED = Map.of(
         // 26.2 PistonBaseBlock.triggerEvent has exactly two draws, both the pitch of a sound: :172 extend (random.nextFloat() * 0.25F + 0.6F)
         // and :217 contract (random.nextFloat() * 0.15F + 0.6F)
-        "net.minecraft.world.level.block.piston.PistonBaseBlock.triggerEvent", "piston extend/contract sound pitch; changes no block, entity or later draw by chain work"
+        "net.minecraft.world.level.block.piston.PistonBaseBlock.triggerEvent", "piston extend/contract sound pitch; changes no block, entity or later draw by chain work",
+        // 26.2 NoteBlock.triggerEvent (:148-174) has exactly one draw: :171 level.getRandom().nextLong(), the seed of the note's sound (playSeededSound)
+        "net.minecraft.world.level.block.NoteBlock.triggerEvent", "note block sound seed; changes no block, entity or later draw by chain work",
+        // 26.2 DoorBlock.playSound (:253-255): one draw, the pitch of the open/close sound (random.nextFloat() * 0.1F + 0.9F)
+        "net.minecraft.world.level.block.DoorBlock.playSound", "door open/close sound pitch; changes no block, entity or later draw by chain work",
+        // 26.2 TrapDoorBlock.playSound (:122-127): one draw, the same pitch
+        "net.minecraft.world.level.block.TrapDoorBlock.playSound", "trapdoor open/close sound pitch; changes no block, entity or later draw by chain work"
     );
 
     private UnseededDrawAllowlist() {

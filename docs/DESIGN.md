@@ -790,6 +790,28 @@ Code: `Footprint` (`writes`, `nextToWrite`, `nearWrite`, `cause`), `LiveWatch.on
 
 ---
 
+## Right-click triggers  [implemented, session after the follow-up]
+Code: `record/Triggers` (`reject`, `press`, `stateText`, `pressText`), `MachineRecorder.start/press` and `Rerun.prepareTrigger` use it; invokers `NoteBlockInvoker`, `TrapDoorBlockAccessor`, `ComparatorBlockInvoker` (mixins, so a missing method fails the start-up); allowlist entries for three sound draws. Tests: `TriggersTest` (2).
+
+Existing before this session: lever (`LeverBlock.pull`) and button (`ButtonBlock.press`), the "pressed already" refusal, the rerun that first puts the trigger back to the recorded state (ruling 1 after step 4). New: everything else below. Anything not on the list: `the block at x y z is <name>, not a supported trigger (supported: lever, button, note block, trapdoor, door and fence gate (not iron), repeater, comparator)`; an iron door or trapdoor: `does not open by hand`.
+
+What a click does, from the 26.2 source (no player, no held item), and what `Triggers.press` does:
+- **Note block**, `NoteBlock.useWithoutItem` (:124-133): `state.cycle(NOTE)`, `level.setBlock(pos, state, 3)`, `playNote(player, ...)` (private, called through the invoker with a null source: `blockEvent` + `gameEvent(NOTE_BLOCK_PLAY)` if the instrument works above or the block above is air, :101-106). Tune +1 wraps 24 -> 0. The stat is left out.
+- **Trapdoor**, `TrapDoorBlock.useWithoutItem` (:92-99) -> `toggle` (:112-120), called through the invoker: `cycle(OPEN)`, `setBlock(.., 2)`, a water tick if waterlogged, the sound; only if `type.canOpenByHand()` (not iron).
+- **Door**, `DoorBlock.useWithoutItem` (:206-216): `cycle(OPEN)`, `setBlock(.., 10)`, sound, game event; identical to the public `setOpen(null, ..)` (:222-227), which is what is called. Not iron. The clicked half is the one written first; its shape update opens the other half.
+- **Fence gate**, `FenceGateBlock.useWithoutItem` (:143-163): toggles OPEN with `setBlock(.., 10)` and a game event. **Left out: the facing flip** of a closed gate when a player stands in front of it (:148-151, `player.getDirection()`; no player) **and the click sound** (:158-159; its pitch draws from the level random, and the unseeded-draw allowlist is keyed by the first caller outside the mod, which for code in this mod would be the test harness or the command).
+- **Repeater**, `RepeaterBlock.useWithoutItem` (:44-51): `setBlock(pos, state.cycle(DELAY), 3)` (delay 4 wraps to 1).
+- **Comparator**, `ComparatorBlock.useWithoutItem` (:130-144): `cycle(MODE)`, the click sound (null player), `setBlock(.., 2)`, and if the block is still a comparator `refreshOutputState` (private, invoker).
+The `mayBuild` checks of the player are not simulated.
+
+**Rerun and the recorded state.** `Recording.triggerStateAtStart` is the whole block state, so for a note block the recorded note comes back (the ghost's trigger is put back without updates, then pressed). The chat line says `(real note block is note 12; prediction is for note 0 → note 1)` when the real block differs; other kinds say `closed → open`, `delay 3 → 4`, `compare → subtract`. A real player tuning the note block is a write at a footprint position, so it starts a rerun (and the rerun predicts the press you recorded, not the tuned note).
+
+**Unseeded draws** (allowlist keyed by class and method, each checked against the source): `NoteBlock.triggerEvent` (:148-174: one draw, `nextLong()` for the sound seed, :171), `DoorBlock.playSound` (:253-255: the pitch), `TrapDoorBlock.playSound` (:122-127: the pitch).
+
+**Tests.** `anObserverWatchingANoteBlockFiresTheMachine`: the 1b machine with an observer (powering the first repeater) watching a note block: `/path machine` on the note block tunes 0 -> 1, the observer fires, 1 TNT, ghost check exact (21 written / ~1000 read positions), world restored; then the real note block is tuned to 12 without updates (a real change in the footprint, the real observer does not see it): the rerun presses 0 -> 1 and the chat line says what the real block is. `eachOtherTriggerIsPressedLikeAClick`: door, trapdoor, fence gate, repeater, comparator: first write at the trigger is the click's change, ghost check exact, no unseeded warning, state restored, `triggerStateAtStart` = the placed state; an iron door and a grass block are refused (with the list). Break-it: note not tuned -> "TNT spawned 0"; trigger not put back in the rerun -> "the rerun did not press the recorded note 0 -> 1".
+
+---
+
 ## Rulings (user decisions)
 
 **R1. Explosion randomness: seed it.**
