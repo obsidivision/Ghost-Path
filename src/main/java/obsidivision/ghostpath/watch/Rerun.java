@@ -8,8 +8,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.ButtonBlock;
-import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.ghost.GhostCopy;
@@ -17,6 +15,7 @@ import obsidivision.ghostpath.ghost.GhostLevel;
 import obsidivision.ghostpath.record.CauseTracker;
 import obsidivision.ghostpath.record.MachineRecorder;
 import obsidivision.ghostpath.record.Recording;
+import obsidivision.ghostpath.record.Triggers;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -24,8 +23,9 @@ import org.jspecify.annotations.Nullable;
  * <ol>
  * <li><b>Wait</b>: the ghost's tickets are added and the ghost chunks are polled once per server tick until they are at the
  * real chunks' levels ({@link GhostCopy.Prepared#poll}); nothing blocks. At most 20 s of real time.</li>
- * <li><b>Copy</b>: the contents are copied in one go (one consistent moment of the real world), the cause tracker is
- * started on the ghost and the trigger is pressed there, as the recording and the ghost check do. Same seed, kick
+ * <li><b>Copy</b>: the sections, heightmaps and light are copied over server ticks with the same time budget as the run (at least
+ * one chunk per tick); block entities, ticks, block events, entities and weather follow in one go, at one moment of the real world,
+ * in the tick the last chunk is done. The cause tracker is started on the ghost and the trigger is pressed there, as the recording and the ghost check do. Same seed, kick
  * setting, clocks, weather and game time as the recording's start.</li>
  * <li><b>Run</b>: the ghost is ticked until its chain has no pending work (and at least as many ticks as the recording
  * had), or until the tick limit. Each server tick runs ghost ticks until the time budget
@@ -50,8 +50,11 @@ final class Rerun {
     private final long createdNanos = System.nanoTime();
     private long workNanos;
     private long copyNanos;
+    private int copyTicks;
+    private boolean copying;
     private long createNanos;
     private @Nullable String triggerNote;
+    private java.util.Map<Long, String> notTicking = java.util.Map.of();
     private boolean running;
     private long maxSliceNanos;
     private final int minTicks;
@@ -61,6 +64,7 @@ final class Rerun {
     private boolean discarded;
 
     Rerun(Watched watch, ServerLevel real, ChunkPos min, ChunkPos max, boolean widened) throws IOException {
+        int[] core = watch.baseRect;
         this.watch = watch;
         this.real = real;
         this.min = min;
@@ -73,8 +77,9 @@ final class Rerun {
         this.createNanos = System.nanoTime() - t0;
         try {
             Recording rec = watch.recording();
+            // a widened run (the chain reached beyond the first area) takes the chunks that are not loaded from the save
             this.prepared = GhostCopy.prepare(real, this.ghost, min, max,
-                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()));
+                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened && obsidivision.ghostpath.PathSettings.beyondLoaded, java.util.Set.of(), core);
         } catch (RuntimeException e) {
             this.ghost.discard();
             throw e;
@@ -97,13 +102,25 @@ final class Rerun {
         try {
             if (this.tracker == null) {
                 if (System.nanoTime() - this.createdNanos > WAIT_LIMIT_NANOS) {
-                    throw new IllegalStateException("timed out waiting for the ghost chunks");
+                    throw new IllegalStateException("timed out waiting for the ghost chunks: " + this.prepared.describeNotReady());
                 }
-                if (!this.prepared.poll()) {
+                if (!this.copying) {
+                    if (!this.prepared.poll()) {
+                        return false;
+                    }
+                    this.copying = true;
+                }
+                // the sections, heightmaps and light are copied over server ticks with the run's time budget (at least one chunk per
+                // tick); the rest of the copy, which is one moment of the real world, follows in the tick the last chunk is done
+                long copyStart = System.nanoTime();
+                this.copyTicks++;
+                boolean sectionsDone = this.prepared.copySome(start + budgetNanos);
+                if (!sectionsDone) {
+                    this.copyNanos += System.nanoTime() - copyStart;
                     return false;
                 }
-                long copyStart = System.nanoTime();
                 this.prepared.finish();
+                this.notTicking = java.util.Map.copyOf(this.prepared.realNotTicking());
                 Recording rec = this.watch.recording();
                 this.triggerNote = this.prepareTrigger(rec);
                 CauseTracker t = CauseTracker.begin(this.ghost, rec.seed(), rec.kickApplied());
@@ -115,7 +132,7 @@ final class Rerun {
                 } finally {
                     t.pause();
                 }
-                this.copyNanos = System.nanoTime() - copyStart;
+                this.copyNanos += System.nanoTime() - copyStart;
                 return false; // the copy used this server tick; the ghost ticks start on the next
             }
             CauseTracker t = this.tracker;
@@ -173,22 +190,11 @@ final class Rerun {
         if (!real.is(wanted.getBlock())) {
             return "trigger is now " + real.getBlock().getName().getString();
         }
-        return wanted.getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " is " + state(real, wanted);
-    }
-
-    private static String state(BlockState s, BlockState like) {
-        if (like.getBlock() instanceof LeverBlock) {
-            return s.getValue(LeverBlock.POWERED) ? "on" : "off";
-        }
-        return s.getValue(ButtonBlock.POWERED) ? "pressed" : "not pressed";
+        return wanted.getBlock().getName().getString().toLowerCase(java.util.Locale.ROOT) + " is " + Triggers.stateText(real);
     }
 
     private static String after(BlockState before) {
-        if (before.getBlock() instanceof LeverBlock) {
-            boolean on = before.getValue(LeverBlock.POWERED);
-            return (on ? "on" : "off") + " \u2192 " + (on ? "off" : "on");
-        }
-        return "not pressed \u2192 pressed";
+        return Triggers.pressText(before);
     }
 
     private void finish(CauseTracker t) {
@@ -207,7 +213,7 @@ final class Rerun {
             Prediction.tntSpawnTicks(t.events(), t.entityTrace()), List.copyOf(t.events()), List.copyOf(t.entityTrace()), fp, t.pending(),
             this.min, this.max, this.widened, List.copyOf(beyond), gaps, this.serverTicks, this.workNanos / 1_000_000L,
             this.copyNanos / 1_000_000L, this.maxSliceNanos / 1_000_000L, this.createNanos / 1_000_000L, this.triggerNote,
-            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles());
+            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles(), this.notTicking, this.copyTicks, t.notSimulated());
         this.finished = true;
         this.discard();
     }

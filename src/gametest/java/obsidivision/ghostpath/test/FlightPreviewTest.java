@@ -115,11 +115,17 @@ public class FlightPreviewTest {
             pts.add(pt(4 + k, 7, "minecraft:arrow", FlightKind.PROJECTILE, k, 3, 7, false, false, false));
             pts.add(pt(4 + k, 8, "minecraft:pig", FlightKind.OTHER, k, 3, 8, false, false, false));
         }
+        // 9: an arrow that hits a block at tick 8 and stays there for 8 ticks: "stuck", at the hit (the note carries the hit's tick)
+        for (int k = 0; k <= 14; k++) {
+            pts.add(pt(4 + k, 9, "minecraft:arrow", FlightKind.PROJECTILE, k, 3, 9, false, false, false));
+        }
+        notes.add(new FlightNote(8, 9, "hit block"));
+        notes.add(new FlightNote(8, 9, "stuck"));
         CompoundTag nbt = new CompoundTag();
         nbt.putString("marker", "tail");
         PathSnapshot s = PathBuilder.build(7, "rerun", "minecraft:overworld", 30, true, pts, notes,
             List.of(new LiveEntity(7, "minecraft:arrow", nbt, 9, 4.0, 3.0, 7.0, false)));
-        helper.assertTrue(s.lines().size() == 8, "lines: " + s.lines().size() + " (the pig must not be drawn)");
+        helper.assertTrue(s.lines().size() == 9, "lines: " + s.lines().size() + " (the pig must not be drawn)");
         for (PathSnapshot.Line l : s.lines()) {
             helper.assertTrue(PathBuilder.REASONS.contains(l.end().reason()), "unknown reason " + l.end().reason());
         }
@@ -127,6 +133,8 @@ public class FlightPreviewTest {
         helper.assertTrue(item.end().reason().equals("settled") && item.end().tick() == 22, "item: " + item.end());
         PathSnapshot.Line arrow = s.lines().stream().filter(l -> l.type().equals("minecraft:arrow") && l.end().reason().equals("hit block")).findFirst().orElse(null);
         helper.assertTrue(arrow != null && arrow.end().tick() == 8 && arrow.points() == 5 && arrow.end().x() == 4.0, "arrow: " + arrow);
+        PathSnapshot.Line stuck = s.lines().stream().filter(l -> l.end().reason().equals("stuck")).findFirst().orElse(null);
+        helper.assertTrue(stuck != null && stuck.end().tick() == 8 && stuck.points() == 5 && stuck.end().z() == 9.0, "stuck arrow: " + (stuck == null ? null : stuck.end()));
         helper.assertTrue(s.lines().stream().anyMatch(l -> l.type().equals("minecraft:ender_pearl") && l.end().reason().equals("hit entity") && l.end().tick() == 7), "ender pearl");
         helper.assertTrue(s.lines().stream().anyMatch(l -> l.kind() == FlightKind.FALLING_BLOCK && l.end().reason().equals("landed")), "falling block");
         helper.assertTrue(s.lines().stream().anyMatch(l -> l.end().reason().equals("unloaded") && l.end().z() == 2.0), "unloaded");
@@ -149,7 +157,7 @@ public class FlightPreviewTest {
      * is added: during the whole rerun the published snapshot does not change; when it is done a new one ("rerun", a higher
      * serial) is there, built from the prediction, with the earlier spawn tick.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:flight_handoff")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:flight_handoff")
     public void snapshotsAreHandedOverWhenARunIsDone(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 1;
@@ -209,7 +217,7 @@ public class FlightPreviewTest {
      * A dispenser shoots an arrow straight up and the recording is limited to 10 ticks: the arrow is still flying, so its
      * line ends "limit" and carries a tail, the arrow's saved state at that moment (its Pos is the line's last point).
      */
-    @GameTest(maxTicks = 12000, padding = 8, environment = "ghostpath-gametest:flight_tail")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_tail")
     public void aProjectileStillFlyingKeepsATail(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -258,7 +266,7 @@ public class FlightPreviewTest {
      * "hit block" at the wall's face, with no tail (it did not keep flying). Also an egg thrown into open air for 10 ticks is
      * not needed here; the "limit" case is the test above.
      */
-    @GameTest(maxTicks = 12000, padding = 8, environment = "ghostpath-gametest:flight_hit")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_hit")
     public void aProjectileThatHitsABlockEndsThere(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -266,6 +274,7 @@ public class FlightPreviewTest {
         PathStore.clear();
         obsidivision.ghostpath.record.RecordingStore.clear();
         TestSupport.removeBarriers(helper);
+        Runnable unforce = TestSupport.forceAround(helper, 2);
         for (int x = 0; x < 8; x++) {
             for (int z = 0; z < 6; z++) {
                 helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
@@ -284,16 +293,65 @@ public class FlightPreviewTest {
         TestSupport.whenSavesFree(helper, () -> whenTicking(helper, lever, () -> {
             MachineCommandTest.Capture out = new MachineCommandTest.Capture();
             MachineCommandTest.runCommand(helper, level, out, lever, () -> {
-                Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
-                helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
-                PathSnapshot s = PathStore.latest();
-                helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
-                PathSnapshot.Line l = s.lines().getFirst();
-                helper.assertTrue(l.type().equals("minecraft:snowball") && l.end().reason().equals("hit block") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
-                double wallFace = helper.absolutePos(new BlockPos(6, 2, 2)).getX();
-                helper.assertTrue(Math.abs(l.end().x() - wallFace) < 0.2, "ends at x=" + l.end().x() + ", the wall's face is x=" + wallFace);
-                LOG.info("[ghostpath] hit: snowball t+{}..t+{}, {} points, ends {} at x={}", l.startTick(), l.end().tick(), l.points(), l.end().reason(), l.end().x());
-                helper.succeed();
+                try {
+                    Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
+                    helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
+                    PathSnapshot s = PathStore.latest();
+                    helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
+                    PathSnapshot.Line l = s.lines().getFirst();
+                    helper.assertTrue(l.type().equals("minecraft:snowball") && l.end().reason().equals("hit block") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
+                    double wallFace = helper.absolutePos(new BlockPos(6, 2, 2)).getX();
+                    helper.assertTrue(Math.abs(l.end().x() - wallFace) < 0.2, "ends at x=" + l.end().x() + ", the wall's face is x=" + wallFace);
+                    LOG.info("[ghostpath] hit: snowball t+{}..t+{}, {} points, ends {} at x={}", l.startTick(), l.end().tick(), l.points(), l.end().reason(), l.end().x());
+                    helper.succeed();
+                } finally {
+                    unforce.run();
+                }
+            });
+        }));
+    }
+
+    /**
+     * Stuck arrows (ruling after step 5): a dispenser shoots an arrow up, it comes down and sticks in the dispenser's roof. No
+     * tick limit helps (the default 2000): the recording ends 8 ticks after the arrow stuck instead of waiting for its despawn
+     * (1200 ticks), and the path ends where it hit, "stuck".
+     */
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 8, environment = "ghostpath-gametest:flight_hit")
+    public void aStuckArrowIsSettled(GameTestHelper helper) {
+        ServerLevel level = helper.getLevel();
+        PathSettings.kick = true;
+        PathSettings.tickLimit = PathSettings.DEFAULT_TICK_LIMIT;
+        PathStore.clear();
+        obsidivision.ghostpath.record.RecordingStore.clear();
+        TestSupport.removeBarriers(helper);
+        Runnable unforce = TestSupport.forceAround(helper, 2);
+        for (int x = 0; x < 8; x++) {
+            for (int z = 0; z < 6; z++) {
+                helper.setBlock(new BlockPos(x, 1, z), Blocks.STONE);
+            }
+        }
+        BlockPos disp = new BlockPos(2, 2, 2);
+        helper.setBlock(disp, Blocks.DISPENSER.defaultBlockState().setValue(DispenserBlock.FACING, Direction.UP));
+        ((DispenserBlockEntity) level.getBlockEntity(helper.absolutePos(disp))).setItem(0, new ItemStack(Items.ARROW));
+        helper.setBlock(new BlockPos(1, 2, 2), Blocks.LEVER.defaultBlockState().setValue(LeverBlock.FACE, AttachFace.FLOOR));
+        BlockPos lever = helper.absolutePos(new BlockPos(1, 2, 2));
+        TestSupport.whenSavesFree(helper, () -> whenTicking(helper, lever, () -> {
+            MachineCommandTest.Capture out = new MachineCommandTest.Capture();
+            MachineCommandTest.runCommand(helper, level, out, lever, () -> {
+                try {
+                    Recording r = obsidivision.ghostpath.record.RecordingStore.latest();
+                    helper.assertTrue(r != null && !r.limitHit(), "recording: " + out.lines);
+                    PathSnapshot s = PathStore.latest();
+                    helper.assertTrue(s != null && s.lines().size() == 1, "snapshot: " + s);
+                    PathSnapshot.Line l = s.lines().getFirst();
+                    helper.assertTrue(l.type().equals("minecraft:arrow") && l.end().reason().equals("stuck") && l.tail() == null, "line: " + l.type() + " " + l.end() + ", tail " + l.tail());
+                    helper.assertTrue(r.ticks() <= l.end().tick() + obsidivision.ghostpath.record.CauseTracker.ARROW_SETTLE_TICKS + 4,
+                        "the recording ran " + r.ticks() + " ticks, the arrow stuck at t+" + l.end().tick());
+                    LOG.info("[ghostpath] stuck: arrow t+{}..t+{}, ends {}, recording {} ticks", l.startTick(), l.end().tick(), l.end().reason(), r.ticks());
+                    helper.succeed();
+                } finally {
+                    unforce.run();
+                }
             });
         }));
     }

@@ -47,3 +47,13 @@ java {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
+
+// ./gradlew runGameTest -PgtFilter=<regex>  runs only the game tests whose id matches (Fabric's fabric-api.gametest.filter)
+tasks.matching { it.name == 'runGameTest' }.configureEach {
+    // a fresh world for every run: the old one kept every earlier run's chunks and entities (4.8 GB after two days), so
+    // a test could meet what another run left behind, and the result depended on the history of the checkout
+    doFirst { delete file('build/run/gameTest/world') }
+    if (project.hasProperty('gtFilter')) {
+        systemProperty 'fabric-api.gametest.filter', project.property('gtFilter')
+    }
+}

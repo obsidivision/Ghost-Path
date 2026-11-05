@@ -83,8 +83,8 @@ public class GhostCheckTest {
     private static void whenIdle(GameTestHelper helper, int waited, Runnable then) {
         if (MachineRecorder.current() == null) {
             then.run();
-        } else if (waited > 6000) {
-            helper.fail("recording did not finish within 6000 ticks");
+        } else if (TestSupport.overRealTime(helper)) {
+            helper.fail("recording did not finish within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
         } else {
             helper.runAfterDelay(1, () -> whenIdle(helper, waited + 1, then));
         }
@@ -95,7 +95,7 @@ public class GhostCheckTest {
         Recording[] out = new Recording[1];
         String[] failed = new String[1];
         try {
-            MachineRecorder.start(level, lever, PathSettings.tickLimit, PathSettings.kick, new MachineRecorder.Listener() {
+            MachineRecorder.start(level, lever, PathSettings.DEFAULT_TICK_LIMIT, PathSettings.kick, new MachineRecorder.Listener() {
                 @Override
                 public void done(Recording recording) {
                     out[0] = recording;
@@ -161,10 +161,12 @@ public class GhostCheckTest {
         for (BlockPos r : rel) {
             ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(r));
         }
+        ready &= TestSupport.forcedChunksTicking(helper);
         if (ready) {
+            LOG.info("[ghostpath] machine area ready after {} ticks; other tests' entities removed from the forced chunks: {}", waited, TestSupport.clearForeignEntities(helper));
             then.run();
-        } else if (waited > 40000) {
-            helper.fail("machine area not entity-ticking after 40000 ticks");
+        } else if (TestSupport.overRealTime(helper)) {
+            helper.fail("machine area not entity-ticking within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
         } else {
             helper.runAfterDelay(1, () -> whenTicking(helper, rel, then, waited + 1));
         }
@@ -190,7 +192,7 @@ public class GhostCheckTest {
     // ---- the four machines ------------------------------------------------------------------------------------------
 
     /** The 1b machine: repeaters, a piston pushing a redstone block, TNT; a floor lever as the trigger; rain on. */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_cause")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_cause")
     public void causeMachineGhostIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -251,7 +253,7 @@ public class GhostCheckTest {
      * A lever next to three dispensers (TNT and snowballs; the item each fires is chosen from the seeded chain random),
      * fodder blocks, sand that falls. The dispensed TNT explodes (seeded), snowballs fly into the wall, sand falls.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_dispenser")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_dispenser")
     public void dispenserMachineGhostIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -277,7 +279,7 @@ public class GhostCheckTest {
      * A lever (on) on a stone block disables the hopper beside it; pulling it enables the hopper, which passes 3 diamonds
      * and 2 stone through a second hopper into a chest. Block entities in the chain, hopper cooldowns, container writes.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_hopper")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_hopper")
     public void hopperMachineGhostIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -315,7 +317,7 @@ public class GhostCheckTest {
      * sensor, which schedules a vibration (block entity listener), activates, and lights a lamp. Vibrations, block
      * entities, the sensor's cooldown.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_sculk")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_sculk")
     public void sculkMachineGhostIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -380,7 +382,7 @@ public class GhostCheckTest {
      * the recording started from. The check must report exact; with the offset left out ({@code leaveGameTimeOffsetOut})
      * the ghost flips the detector on another tick relative to the run and the check must notice.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_daylight")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_daylight")
     public void daylightDetectorMachineGhostIsExact(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -395,6 +397,7 @@ public class GhostCheckTest {
         BlockPos detector = helper.absolutePos(new BlockPos(2, 2, 3));
         whenTicking(helper, CORNERS, TestSupport.once(() -> TestSupport.whenSavesFree(helper, () -> TestSupport.later(helper, 60, () -> {
             int settled = level.getBlockState(detector).getValue(DaylightDetectorBlock.POWER);
+            // zero when the sun gives power and vice versa: the lamp then sees the flip (the break-it check needs that)
             int wrong = settled == 0 ? 5 : 0;
             helper.assertTrue(level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT), "the lamp is not lit before the recording");
             LOG.info("[ghostpath] daylight machine: detector settled at power {}, set to {} before the recording", settled, wrong);
@@ -404,8 +407,9 @@ public class GhostCheckTest {
                 record(helper, level, lever, rec -> {
                     try {
                         helper.assertTrue(rec.startGameTime() % 20 == 19, "recording did not start at gameTime % 20 == 19: " + rec.startGameTime());
-                        helper.assertTrue(level.getBlockState(detector).getValue(DaylightDetectorBlock.POWER) == settled,
-                            "the real detector did not flip during the recording: " + level.getBlockState(detector));
+                        // not "== settled": the sun's power can step between the measurement and the flip (a flake in about one run in ten)
+                        helper.assertTrue(Math.abs(level.getBlockState(detector).getValue(DaylightDetectorBlock.POWER) - settled) <= 2,
+                            "the real detector did not flip to the sun's power during the recording: " + level.getBlockState(detector) + ", settled " + settled + ", planted " + wrong);
                         helper.assertTrue(rec.footprint().contains(detector), "the chain never read the detector");
                         // the world as the recording started from it: the flip is not chain work and stays after the restore
                         level.setBlock(detector, wrongState, 2);
@@ -445,7 +449,7 @@ public class GhostCheckTest {
      * copied mid-pulse into a ghost whose game time is 1000 less; every pending block tick has the same remaining delay
      * ({@code triggerTick - gameTime}) in both, and so does the lamp at the end of the chain on the same relative tick.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_shift")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_shift")
     public void copiedTicksKeepTheirRemainingDelayWithShiftedGameTime(GameTestHelper helper) throws java.io.IOException {
         ServerLevel level = helper.getLevel();
         prepare(helper, 8, 6);
@@ -486,17 +490,21 @@ public class GhostCheckTest {
                             on[1] = i + 1;
                         }
                     }
-                    for (int i = 0; i < 40; i++) {
-                        TestSupport.later(helper, i + 1, () -> {
-                            if (on[0] < 0 && level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT)) {
-                                on[0] = (int) (level.getGameTime() - startReal);
-                            }
-                        });
-                    }
-                    TestSupport.later(helper, 42, () -> {
+                    // one callback per tick, and the real side is checked on every game tick (a skipped one fails)
+                    long[] lastSeen = {startReal, 0};
+                    TestSupport.eachTick(helper, 1, 40, t -> {
+                        if (level.getGameTime() != lastSeen[0] + 1) {
+                            lastSeen[1]++;
+                        }
+                        lastSeen[0] = level.getGameTime();
+                        if (on[0] < 0 && level.getBlockState(lamp).getValue(RedstoneLampBlock.LIT)) {
+                            on[0] = (int) (level.getGameTime() - startReal);
+                        }
+                    }, () -> {
                         ghost.discard();
                         CauseTrackingTest.forceChunks(helper, false);
                         LOG.info("[ghostpath] shifted copy: lamp lit after +{} real, +{} ghost", on[0], on[1]);
+                        helper.assertTrue(lastSeen[1] == 0, "real ticks not observed one by one: " + lastSeen[1] + " gaps");
                         helper.assertTrue(on[0] > 0 && on[0] == on[1], "lamp lit on different ticks: real +" + on[0] + ", ghost +" + on[1]);
                         helper.succeed();
                     });
@@ -551,7 +559,7 @@ public class GhostCheckTest {
      * The 1b machine, recorded once and checked many times. Each variant breaks the ghost in one way; the check must
      * report a difference of the right kind at the right tick and place (computed here from the real recording).
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_break")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_break")
     public void checkNamesTickAndPositionOfWhatDiffers(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.kick = true;
@@ -702,7 +710,7 @@ public class GhostCheckTest {
      * chain work in the ghost uses it (once per tick and kind), and not when anything else does (the real level, ghost
      * infrastructure, work outside the chain). The chunk map's own players() call when chain work spawns an entity is not a use.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_gaps")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_gaps")
     public void ghostGapsAreLoggedWhenChainWorkHitsThem(GameTestHelper helper) throws java.io.IOException {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper);
@@ -766,7 +774,7 @@ public class GhostCheckTest {
      * start); the ghost's ticks move only the ghost's; the real clocks do not move; the environment attributes (sun
      * angle, sky light) read the ghost's clock.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_clock")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_clock")
     public void ghostClockIsItsOwn(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         TestSupport.removeBarriers(helper);
@@ -830,7 +838,7 @@ public class GhostCheckTest {
      * any player, although they are in its chunk map (so the ghost's own id allocation sees them). Positive control: a packet
      * sent inside ghost work is counted.
      */
-    @GameTest(maxTicks = 60000, padding = 24, environment = "ghostpath-gametest:ghostcheck_packets")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:ghostcheck_packets")
     @SuppressWarnings("deprecation")
     public void ghostEntitiesAreNeverTrackedOrSent(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();

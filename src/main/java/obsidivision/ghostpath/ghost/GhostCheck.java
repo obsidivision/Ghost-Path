@@ -215,6 +215,16 @@ public final class GhostCheck {
      */
     public static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, java.util.Collection<BlockPos> footprint,
                                                          Set<CauseTracker.Column> columns, Set<AABB> areas, int @Nullable [] mustInclude, int margin) {
+        return chooseRectangle(real, footprint, columns, areas, mustInclude, margin, false);
+    }
+
+    /**
+     * With {@code disk}, a margin of {@code margin} chunks is taken whether or not those chunks are loaded (the ones that are not are
+     * copied from the save, {@code GhostCopy.prepare} with {@code allowDisk}); nothing has to be loaded (the footprint's own chunks
+     * too may be ones the real world has unloaded). A rerun that reaches beyond its copied area widens like this.
+     */
+    public static ChunkPos @Nullable [] chooseRectangle(ServerLevel real, java.util.Collection<BlockPos> footprint,
+                                                         Set<CauseTracker.Column> columns, Set<AABB> areas, int @Nullable [] mustInclude, int margin, boolean disk) {
         int[] core = {Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE};
         for (BlockPos p : footprint) {
             include(core, p.getX() >> 4, p.getZ() >> 4);
@@ -235,6 +245,9 @@ public final class GhostCheck {
             include(withAreas, BlockPos.containing(box.maxX, box.maxY, box.maxZ).getX() >> 4, BlockPos.containing(box.maxX, box.maxY, box.maxZ).getZ() >> 4);
         }
         List<int[]> candidates = new ArrayList<>();
+        if (disk && margin > 1) {
+            candidates.add(grow(withAreas, margin));
+        }
         if (margin > 1) {
             candidates.add(growLoaded(real, withAreas, margin));
         }
@@ -243,7 +256,9 @@ public final class GhostCheck {
         candidates.add(grow(core, 1));
         candidates.add(core);
         for (int[] c : candidates) {
-            if (allLoaded(real, c)) {
+            // a disk candidate (the first one) needs nothing loaded: what is not loaded comes from the save (a rerun's own footprint can lie in
+            // chunks the real world has unloaded: the chain the ghost follows past the loaded area)
+            if (allLoaded(real, c) || disk && c == candidates.get(0) && margin > 1) {
                 return new ChunkPos[] {new ChunkPos(c[0], c[1]), new ChunkPos(c[2], c[3])};
             }
         }

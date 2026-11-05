@@ -34,19 +34,22 @@ import obsidivision.ghostpath.record.Recording;
  * @param gaps            gaps the ghost hit (border, POI, players, lookup by key)
  * @param serverTicks     server ticks the run was spread over
  * @param millis          server-thread time the run took in total
- * @param copyMillis      of which the copy (the one slice that cannot be split: one consistent moment of the real world)
+ * @param copyMillis      of which the copy: server-thread time of all its slices (sections over several ticks, the rest in one)
+ * @param notSimulated    things this run could not imitate ("player-owned pearl: chunk loading not simulated")
+ * @param copyTicks       server ticks the copy took (one per slice of chunks; the last one also does the block entities, ticks, block events and entities)
  * @param createMillis    of which creating the (empty) ghost level; not budgeted, logged in the chat line (ruling 4 after step 4)
  * @param triggerNote     the real trigger is not in the state the recording found it in: "real lever is on; prediction is for off → on"; or null
  * @param flightPoints    every chain entity's position per tick, as numbers (step 5)
  * @param flightNotes     hits and removals of chain entities (step 5)
  * @param liveProjectiles chain projectiles still flying when the run stopped at the tick limit (step 5)
  * @param maxSliceMillis  the longest slice of ghost ticks, copy excluded (the budget is checked after each ghost tick)
+ * @param notTicking      copied chunks the real world does not tick entities in: chunk key to "unloaded" or "lazy" (see GhostCopy.Prepared#realNotTicking)
  */
 public record Prediction(int ticks, boolean limitHit, int tntSpawned, List<Integer> tntSpawnTicks, List<ChainEvent> events,
                          List<CauseTracker.EntityTrace> trace, Footprint footprint, CauseTracker.Pending pendingAtEnd, ChunkPos copiedMin,
                          ChunkPos copiedMax, boolean widened, List<ChunkPos> beyond, List<String> gaps, int serverTicks, long millis, long copyMillis,
                          long maxSliceMillis, long createMillis, String triggerNote, List<CauseTracker.FlightPoint> flightPoints,
-                         List<CauseTracker.FlightNote> flightNotes, List<CauseTracker.LiveEntity> liveProjectiles) {
+                         List<CauseTracker.FlightNote> flightNotes, List<CauseTracker.LiveEntity> liveProjectiles, Map<Long, String> notTicking, int copyTicks, List<String> notSimulated) {
 
     /** The chain entity states of one tick, in the order the ghost ticked them. */
     public List<CauseTracker.EntityTrace> statesAt(long tick) {

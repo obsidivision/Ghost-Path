@@ -3,7 +3,11 @@
   "package": "obsidivision.ghostpath.client.mixin",
   "compatibilityLevel": "JAVA_25",
   "client": [
-    "ClientLevelPreviewMixin"
+    "ClientLevelPreviewMixin",
+    "MinecraftInspectMixin",
+    "MouseHandlerInspectMixin",
+    "ParticleEngineGuardMixin",
+    "SoundManagerGuardMixin"
   ],
   "injectors": {
     "defaultRequire": 1

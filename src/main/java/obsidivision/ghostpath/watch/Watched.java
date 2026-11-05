@@ -23,15 +23,37 @@ public final class Watched {
     boolean dirty;
     /** Server tick of the last footprint change. */
     long lastChange;
+    /** What the last change was (for /path watch list). */
+    String lastWhat = "-";
     int changes;
+    /** The block change that made the watch dirty (the latest one): where, and a short label ("piston placed"); null for other kinds of change. */
+    @Nullable BlockPos lastChangePos;
+    String lastChangeLabel = "";
+    /** Set by {@code /path rerun}: the next run starts without the quiet period. */
+    boolean forced;
+    /** The change that started the rerun in progress or the last finished one (for the area overlay). */
+    @Nullable Change trigger;
     int reruns;
     int cancelled;
+    /** Widenings in a row of the current rerun (0 for a run that started from a change). */
+    int widenRounds;
+    /** The chunk rectangle of the last unwidened run: the machine's own copied area, whose chunks keep their real loading levels in widened runs. */
+    int @Nullable [] baseRect;
     int failures;
     int widenings;
     String status = "idle";
     final EntityWatch entities = new EntityWatch();
     /** Entity changes counted (added, removed, settled at a new position); see {@link EntityWatch}. */
     int entityChanges;
+
+    /** The block change that started a rerun: position (null if it was not a block change), label, and the server tick when the run started. */
+    public record Change(@Nullable BlockPos pos, String label, long serverTick) {
+    }
+
+    /** The change that started the last rerun, or null. */
+    public @Nullable Change lastTrigger() {
+        return this.trigger;
+    }
 
     Watched(Recording recording, Consumer<String> chat) {
         this.recording = recording;

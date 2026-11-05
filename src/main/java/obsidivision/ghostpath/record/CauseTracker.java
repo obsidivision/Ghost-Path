@@ -26,6 +26,7 @@ import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.entity.item.PrimedTnt;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.entity.projectile.arrow.AbstractArrow;
 import net.minecraft.world.entity.vehicle.VehicleEntity;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
@@ -33,6 +34,7 @@ import net.minecraft.world.level.BlockEventData;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.HopperBlockEntity;
+import obsidivision.ghostpath.mixin.AbstractArrowAccessor;
 import obsidivision.ghostpath.mixin.HopperBlockEntityAccessor;
 import net.minecraft.world.level.block.piston.PistonMovingBlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -109,12 +111,66 @@ public final class CauseTracker {
         }
     }
 
+    /**
+     * Runs {@code body} with chain context off, if this thread is doing chain work now; context is put back afterwards.
+     * Used for {@code BlockableEventLoop.managedBlock} (the server thread waiting, e.g. for a chunk that a chain read
+     * needs: {@code ServerChunkCache.getChunk}, ServerChunkCache.java:166, :219). While it waits, that loop runs whatever
+     * main-thread work is queued: chunk promotions with their block entities and world-gen entities, distance-manager
+     * updates. None of it is the chain's, and what is queued at that moment depends on how far the asynchronous chunk
+     * work has got. Run as chain work, each entity built there took a chain construction index (the id residue of the
+     * chain's later entities, {@link #chainEntityId}) and a chain-stream draw (its own random's seed), so everything the
+     * chain drew afterwards moved: the order of an explosion's drops changed between two runs of the same machine.
+     */
+    public static void outsideChain(Runnable body) {
+        CauseTracker t = active;
+        if (t == null || t.depth == 0 || Thread.currentThread() != t.thread) {
+            body.run();
+            return;
+        }
+        int saved = t.depth;
+        t.depth = 0;
+        if (t.chainWaits++ == 0) {
+            LOGGER.info("[ghostpath] chain work waits for the server (a chunk load); main-thread tasks run meanwhile are not chain work");
+        }
+        try {
+            body.run();
+        } finally {
+            t.depth = saved;
+        }
+    }
+
+    /** How often chain work waited in {@code managedBlock} (see {@link #outsideChain}). */
+    public int chainWaits() {
+        return this.chainWaits;
+    }
+
     /** The random a redirected site should use: the chain stream during chain work in the tracked level, else vanilla's. */
     public static RandomSource randomFor(Level level, RandomSource vanilla) {
         CauseTracker t = active;
         return t != null && t.inChain(level) ? t.chainRandom : vanilla;
     }
 
+    /**
+     * The random of a loot roll during chain work (ruling after the follow-up, item 5). 26.2 {@code LootContext.Builder.create}
+     * (:138-143) takes the builder's own random if it has one (a seeded chest), else the server's per-table
+     * {@code RandomSequences} stream ({@code server.getRandomSequence(key)}, saved with the world and <b>shared by the real level and
+     * every ghost</b>), else the level's random. During chain work this returns a stream of the chain instead: for a table with a key
+     * one of its own, derived from the chain seed and the key (so the rolls of one table repeat in order whatever else the chain
+     * draws in between, and the world's sequence is not advanced by a recording or a rerun), for no key the chain stream.
+     */
+    public static RandomSource lootRandomFor(Level level, net.minecraft.resources.@Nullable Identifier key, RandomSource vanilla) {
+        CauseTracker t = active;
+        if (t == null || !t.inChain(level)) {
+            return vanilla;
+        }
+        if (key == null) {
+            return t.chainRandom;
+        }
+        return t.lootRandoms.computeIfAbsent(key.toString(), k -> RandomSource.create(t.seed ^ (k.hashCode() * 0x9E3779B97F4A7C15L)));
+    }
+
+    private final Map<String, RandomSource> lootRandoms = new java.util.HashMap<>();
+    private final long seed;
     private final ServerLevel level;
     private final Thread thread;
     private final long startTime;
@@ -122,6 +178,7 @@ public final class CauseTracker {
     private final boolean kick;
     private int depth;
     private int entitiesConstructed;
+    private int chainWaits;
     /** Index for the next tagged entity; not the map size, since entities that leave the dimension leave the map. */
     private int nextEntityIndex;
 
@@ -162,6 +219,9 @@ public final class CauseTracker {
     /** Item entities of the chain: the position after their last tick and for how many ticks in a row it did not change. */
     private final Map<Entity, Vec3> lastItemPos = new IdentityHashMap<>();
     private final Map<Entity, Integer> itemRestTicks = new IdentityHashMap<>();
+    /** Per chain arrow: consecutive ticks it has been stuck in a block, and the recording tick the current stretch began. */
+    private final Map<Entity, Integer> arrowStuckTicks = new IdentityHashMap<>();
+    private final Map<Entity, Long> arrowStuckSince = new IdentityHashMap<>();
     /** Item ticks whose position changed, but by less than {@link #ITEM_STILL_EPSILON}, and so counted as unchanged. */
     private int itemDriftTicks;
     /** Chain entities whose tick is running now, innermost last (passengers tick inside their vehicle's tick). */
@@ -172,6 +232,7 @@ public final class CauseTracker {
         this.level = level;
         this.thread = Thread.currentThread();
         this.startTime = level.getGameTime();
+        this.seed = seed;
         this.chainRandom = RandomSource.create(seed);
     }
 
@@ -290,6 +351,13 @@ public final class CauseTracker {
      * (two full 4-tick cycles of ItemEntity.java:141). Velocity is ignored: it is never zero for a resting item.
      */
     public static final int ITEM_SETTLE_TICKS = 8;
+    /**
+     * Stuck-arrow rule (ruling after step 5): an arrow ({@code AbstractArrow}) that has been stuck in a block
+     * ({@code isInGround()}, AbstractArrow.java:354) for this many consecutive ticks of its own counts as settled, like an
+     * item: it no longer holds the recording open (it would otherwise stay until it despawns, 1200 ticks,
+     * {@code tickDespawn} :375), and its path ends where it hit, reason "stuck".
+     */
+    public static final int ARROW_SETTLE_TICKS = 8;
     /** A position change below this on every axis counts as unchanged: the friction-decayed x/z drift (about 1e-8). */
     public static final double ITEM_STILL_EPSILON = 1.0E-6;
 
@@ -317,6 +385,9 @@ public final class CauseTracker {
             }
             if (e instanceof ItemEntity && e.onGround() && this.itemRestTicks.getOrDefault(e, 0) >= ITEM_SETTLE_TICKS) {
                 continue;
+            }
+            if (e instanceof AbstractArrow && this.arrowStuckTicks.getOrDefault(e, 0) >= ARROW_SETTLE_TICKS) {
+                continue; // stuck in a block: settled, like an item
             }
             entities++;
         }
@@ -597,6 +668,8 @@ public final class CauseTracker {
             this.chainEntities.remove(entity);
             this.lastItemPos.remove(entity);
             this.itemRestTicks.remove(entity);
+            this.arrowStuckTicks.remove(entity);
+            this.arrowStuckSince.remove(entity);
         }
     }
 
@@ -693,6 +766,39 @@ public final class CauseTracker {
 
     // ---- hooks: entities ----
 
+    /** The text of the note when a chain ender pearl belongs to a player (see {@link #notSimulated()}). */
+    public static final String PLAYER_PEARL = "player-owned pearl: chunk loading not simulated";
+
+    /** Things in this run the ghost cannot imitate, once each, as text (summary and rerun line). */
+    private final Set<String> notSimulated = new java.util.LinkedHashSet<>();
+
+    public List<String> notSimulated() {
+        return List.copyOf(this.notSimulated);
+    }
+
+    /**
+     * 26.2 {@code ThrownEnderpearl.tick} (:155-182): a pearl whose owner is a {@code ServerPlayer} calls
+     * {@code registerAndUpdateEnderPearlTicket} (ServerPlayer.java:2237-2246) every 40 ticks and whenever it enters another chunk: a
+     * ticket {@code TicketType.ENDER_PEARL} (radius 2, 40 ticks) that keeps the chunks around it loaded and ticking. A pearl with another
+     * owner or none places nothing (the machine case, which the ghost does follow). The ghost has no players, so the owner is not found
+     * there, and the chunks the ticket would load are not in its copy: not simulated. The owner counts as a player if it is found as one
+     * in this level or its UUID belongs to an online player (the ghost's pearl has the saved owner UUID but no owner entity).
+     */
+    private boolean ownedByAPlayer(net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl pearl) {
+        if (pearl.getOwner() instanceof net.minecraft.server.level.ServerPlayer) {
+            return true;
+        }
+        var ref = ((obsidivision.ghostpath.mixin.GhostProjectileAccessor) pearl).ghostpath$owner();
+        var server = pearl.level().getServer();
+        return ref != null && server != null && server.getPlayerList().getPlayer(ref.getUUID()) != null;
+    }
+
+    private void notePearl(Entity entity) {
+        if (entity instanceof net.minecraft.world.entity.projectile.throwableitemprojectile.ThrownEnderpearl pearl && this.ownedByAPlayer(pearl)) {
+            this.notSimulated.add(PLAYER_PEARL);
+        }
+    }
+
     /** Chain work spawned, moved, pushed or hurt {@code entity}. */
     public void onEntityTouched(Entity entity, String why) {
         if (this.inChain(entity.level())) {
@@ -708,6 +814,7 @@ public final class CauseTracker {
         int index = this.nextEntityIndex++;
         this.chainEntities.put(entity, index);
         this.everTagged.add(entity);
+        this.notePearl(entity);
         // no position: an entity is often tagged inside its constructor, before its position is set
         this.log(ChainEvent.Kind.ENTITY_TAGGED, null, "#" + index + " " + EntityType.getKey(entity.getType()) + " " + why);
     }
@@ -715,6 +822,7 @@ public final class CauseTracker {
     /** After {@code ServerLevel.addEntity} accepted {@code entity} (the call that tags it comes first). */
     public void onEntityAdded(Entity entity) {
         if (this.chainEntities.containsKey(entity)) {
+            this.notePearl(entity); // tagged in its constructor, before the owner was set
             this.addedChainEntities.add(entity);
             if (this.traceEntities) {
                 this.addFlightPoint(entity, this.chainEntities.get(entity)); // where it starts, before its first tick
@@ -751,6 +859,20 @@ public final class CauseTracker {
             }
             this.itemRestTicks.put(entity, still && entity.onGround() ? this.itemRestTicks.getOrDefault(entity, 0) + 1 : 0);
         }
+        if (entity instanceof AbstractArrow arrow) {
+            if (!entity.isRemoved() && ((AbstractArrowAccessor) arrow).ghostpath$isInGround()) {
+                long now = this.level.getGameTime() - this.startTime;
+                this.arrowStuckSince.putIfAbsent(entity, now);
+                int stuck = this.arrowStuckTicks.merge(entity, 1, Integer::sum);
+                if (stuck == ARROW_SETTLE_TICKS && this.traceEntities) {
+                    // the path ends where the arrow stuck (the tick it began), not 8 ticks later
+                    this.flightNotes.add(new FlightNote(this.arrowStuckSince.get(entity), index, "stuck"));
+                }
+            } else {
+                this.arrowStuckTicks.remove(entity);
+                this.arrowStuckSince.remove(entity);
+            }
+        }
         String item = entity instanceof ItemEntity ie ? " item=" + ie.getItem().getCount() + " " + BuiltInRegistries.ITEM.getKey(ie.getItem().getItem()) : "";
         this.log(ChainEvent.Kind.ENTITY_STATE, null, "#" + index + " " + EntityType.getKey(entity.getType()) + item
             + " pos=(" + p.x + ", " + p.y + ", " + p.z + ") v=(" + v.x + ", " + v.y + ", " + v.z + ")"
@@ -786,10 +908,15 @@ public final class CauseTracker {
 
     /**
      * One chain entity at one tick: after its own tick (or, for the first point of an entity, where it was added). Exact
-     * doubles. {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
+     * doubles; {@code box} is its bounding box then (step 6, the inspector), {@code fuse} a primed TNT's remaining fuse (else -1). {@code portal}: it was in a portal ({@code Entity.portalProcess}, :284) after this tick.
      */
     public record FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
-                              boolean onGround, boolean removed, boolean portal) {
+                              boolean onGround, boolean removed, boolean portal, @Nullable AABB box, int fuse) {
+        /** Without the bounding box and the fuse (tests; the builder then uses a box of no size at the position and fuse -1). */
+        public FlightPoint(long tick, int index, String type, FlightKind kind, double x, double y, double z, double vx, double vy, double vz,
+                           boolean onGround, boolean removed, boolean portal) {
+            this(tick, index, type, kind, x, y, z, vx, vy, vz, onGround, removed, portal, null, -1);
+        }
     }
 
     /** Why a chain entity's path ended or what it hit: "hit block", "hit entity" (projectiles), "removed KILLED", "removed UNLOADED_TO_CHUNK", ... */
@@ -800,7 +927,7 @@ public final class CauseTracker {
         Vec3 p = e.position();
         Vec3 v = e.getDeltaMovement();
         this.flightPoints.add(new FlightPoint(this.level.getGameTime() - this.startTime, index, EntityType.getKey(e.getType()).toString(), FlightKind.of(e),
-            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null));
+            p.x, p.y, p.z, v.x, v.y, v.z, e.onGround(), e.isRemoved(), e.portalProcess != null, e.getBoundingBox(), e instanceof PrimedTnt tnt ? tnt.getFuse() : -1));
     }
 
     /** {@code Projectile.hitTargetOrDeflectSelf}, before it runs: a chain projectile hit a block or an entity. */
@@ -956,7 +1083,7 @@ public final class CauseTracker {
 
     /**
      * {display, key}. Display: the first caller outside the random classes; if that is a helper in net.minecraft.util
-     * (Mth, Util), its caller is added. Key: "File.java:line" of the first frame outside those helpers (allowlist key).
+     * (Mth, Util), its caller is added. Key: "full.class.Name.method" of the first frame outside those helpers (allowlist key; the line is only in the display).
      */
     private static String[] callSite() {
         return StackWalker.getInstance().walk(frames -> {
@@ -973,7 +1100,7 @@ public final class CauseTracker {
                     parts.add(name);
                 }
                 if (!helper) {
-                    key = f.getFileName() + ":" + f.getLineNumber();
+                    key = cls + "." + f.getMethodName(); // no line number: it differs between builds of the jar (a second checkout, a Minecraft update)
                     break;
                 }
             }

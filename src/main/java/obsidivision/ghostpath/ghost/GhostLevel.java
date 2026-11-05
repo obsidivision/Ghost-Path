@@ -309,6 +309,21 @@ public final class GhostLevel extends ServerLevel {
         ((GhostServerLevelAccessor) (Object) this).ghostpath$entityManager().tick();
     }
 
+    /**
+     * The ghost's pending main-thread work for up to {@code nanos}: {@link #pollOnce} again and again while it keeps finding
+     * tasks, then once more after a short wait for the loader threads to hand in more, until the time is up. One task per server
+     * tick takes hundreds of ticks for a few chunks.
+     */
+    void pollSlice(long nanos) {
+        long end = System.nanoTime() + nanos;
+        do {
+            if (!this.getChunkSource().pollTask()) {
+                java.util.concurrent.locks.LockSupport.parkNanos(50_000L);
+            }
+            ((GhostServerLevelAccessor) (Object) this).ghostpath$entityManager().tick();
+        } while (System.nanoTime() < end);
+    }
+
     /** Waits until every light task queued so far for the copied chunks has run (ThreadedLevelLightEngine.java:210). */
     public void flushLight() {
         List<CompletableFuture<?>> pending = new ArrayList<>();

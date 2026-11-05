@@ -18,6 +18,8 @@ import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.entity.DispenserBlockEntity;
 import net.minecraft.world.level.block.state.properties.AttachFace;
 import net.minecraft.world.level.levelgen.Heightmap;
+import obsidivision.ghostpath.PathSettings;
+import obsidivision.ghostpath.client.Inspector;
 import obsidivision.ghostpath.client.PathRenderer;
 import obsidivision.ghostpath.client.Tails;
 import obsidivision.ghostpath.preview.PathSnapshot;
@@ -34,9 +36,9 @@ import org.slf4j.LoggerFactory;
  *     events, no hit effects; the copy never joins the level) until it hits the ground;</li>
  * <li>the same machine is then recorded without the limit; the continuation must follow the same positions, tick for tick, and
  *     end at the same place for the same reason (the ghost run and the client use the same vanilla tick code);</li>
- * <li>the renderer submitted lines in the frames (counters). What the lines look like cannot be checked here: with the virtual
- *     display's software OpenGL no gizmo shows in a screenshot, not even vanilla's own (F3+G chunk borders, tried), so the
- *     screenshots this test takes only show the scene.</li>
+ * <li>the renderer submitted lines in the frames (counters), and the path is in a capture of the real render target
+ *     ({@link ClientShots}; Fabric's own {@code takeScreenshot} leaves gizmos out, vanilla's too: that was the "no gizmo shows"
+ *     finding, see {@code GizmoVisibilityGameTest}).</li>
  * </ol>
  */
 public class ClientPreviewGameTest implements FabricClientGameTest {
@@ -87,21 +89,84 @@ public class ClientPreviewGameTest implements FabricClientGameTest {
             double[] contXyz = context.computeOnClient(client -> job.xyz.toDoubleArray());
             long[] contTicks = context.computeOnClient(client -> job.ticks.toLongArray());
             LOG.info("[ghostpath] client test: continuation {} points, ends {} at t+{}", points, why, contTicks[contTicks.length - 1]);
-            check(points > 10 && "hit block".equals(why), "the continuation: " + points + " points, " + why);
+            check(points > 10 && "stuck".equals(why), "the continuation: " + points + " points, " + why);
             int frames = PathRenderer.framesDrawn;
             context.waitTicks(10);
             check(PathRenderer.framesDrawn > frames && PathRenderer.lastLines == 1 && PathRenderer.lastSegments > 5,
                 "the renderer drew " + PathRenderer.framesDrawn + " frames (was " + frames + "), lines " + PathRenderer.lastLines + ", segments " + PathRenderer.lastSegments);
-            Path shot1 = context.takeScreenshot("ghostpath-continued-arrow");
-            LOG.info("[ghostpath] client test: screenshot {}", shot1);
+            // the path in a capture of the real main render target (ClientShots: Fabric's takeScreenshot has no gizmos): the same view
+            // with the paths hidden is the baseline, and the coloured pixels of the line and its labels are the difference
+            PathSettings.showPaths = false;
+            context.waitTicks(3);
+            Path hidden = ClientShots.capture(context, "ghostpath-path-hidden");
+            PathSettings.showPaths = true;
+            context.waitTicks(3);
+            Path shot1 = ClientShots.capture(context, "ghostpath-continued-arrow");
+            int changed = ClientShots.countDifferent(hidden, shot1, 60);
+            LOG.info("[ghostpath] client test: screenshot {} ({} pixels differ from the same view with the paths hidden)", shot1, changed);
+            check(changed > 150, "the path is not in the capture: " + changed + " pixels differ");
 
-            // 2. the same shot with a limit past the landing (an arrow stuck in the ground holds a recording open until it despawns
-            //    after 1200 ticks, so "no limit" would take that long): the whole flight on the server
-            server.runCommand("path limit 80");
+            // 1b. a continued point is hovered like a ghost point (camera 6 blocks north of it, looking south)
+            int pick = contTicks.length / 2;
+            net.minecraft.world.phys.Vec3 at = new net.minecraft.world.phys.Vec3(contXyz[3 * pick], contXyz[3 * pick + 1] + PathRenderer.lift(line.kind()), contXyz[3 * pick + 2]);
+            server.runCommand("tp @a " + at.x + " " + (at.y - 1.62) + " " + (at.z - 6.0) + " 0 0");
+            context.waitTicks(5);
+            context.waitFor(c -> Inspector.hoveredTail() != null, 200);
+            Inspector.TailHover th = context.computeOnClient(c -> Inspector.hoveredTail());
+            check(th.point() == pick && Inspector.hoveredGhost() == null, "hovered continued point " + th.point() + ", wanted " + pick);
+            context.waitTicks(2);
+            java.util.List<String> panel = Inspector.lastHoverPanel;
+            LOG.info("[ghostpath] client test: hovering continued point {} (t+{}): {}", pick, contTicks[pick], panel);
+            check(panel.getFirst().equals("minecraft:arrow  t+" + contTicks[pick] + "  (continued, client-side)") && panel.contains("pos x " + contXyz[3 * pick])
+                && panel.contains("pos y " + contXyz[3 * pick + 1]) && panel.stream().anyMatch(l -> l.startsWith("vel x ")), "continued panel: " + panel);
+            ClientShots.capture(context, "inspector-continued");
+
+            // 1c. the inspect key as a toggle: one press switches it on (the ray then goes through blocks), another off
+            net.minecraft.core.BlockPos wall = net.minecraft.core.BlockPos.containing(at.x, at.y, at.z - 3.0);
+            server.runOnServer(srv -> srv.overworld().setBlock(wall, Blocks.STONE.defaultBlockState(), 3));
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.hoveredTail()) == null, "hovered through a block");
+            server.runCommand("path inspect toggle");
+            context.getInput().pressKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.inspecting() && Inspector.hoveredTail() != null), "toggled on: the point behind the block must be hovered");
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> Inspector.inspecting()), "toggled on: still on after the key was released");
+            context.getInput().pressKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(5);
+            check(context.computeOnClient(c -> !Inspector.inspecting() && Inspector.hoveredTail() == null), "toggled off");
+            server.runCommand("path inspect hold");
+            context.getInput().holdKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(4);
+            check(context.computeOnClient(c -> Inspector.inspecting()), "hold mode: held");
+            context.getInput().releaseKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(4);
+            check(context.computeOnClient(c -> !Inspector.inspecting()), "hold mode: released");
+            server.runOnServer(srv -> srv.overworld().setBlock(wall, Blocks.AIR.defaultBlockState(), 3));
+
+            // 1d. /path pins clear
+            context.getInput().holdKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            context.waitTicks(3);
+            context.getInput().pressMouse(0); // clicking a continued point pins nothing and attacks nothing
+            context.waitTicks(3);
+            context.getInput().releaseKey(obsidivision.ghostpath.client.GhostPathClient.INSPECT);
+            check(Inspector.pins().isEmpty(), "a continued point was pinned");
+            context.computeOnClient(c -> {
+                Inspector.addPinForTest(new obsidivision.ghostpath.inspect.Pin("minecraft:arrow", 0, 3));
+                return null;
+            });
+            check(Inspector.pins().size() == 1, "test pin");
+            server.runCommand("path pins clear");
+            context.waitTicks(3);
+            check(Inspector.pins().isEmpty(), "pins after /path pins clear: " + Inspector.pins());
+
+            // 2. the same shot with the default limit: a stuck arrow is settled (ruling after step 5), so the recording ends a few
+            //    ticks after it stuck and no limit is needed; the whole flight is on the server
+            server.runCommand("path limit " + PathSettings.DEFAULT_TICK_LIMIT);
             server.runCommand("path machine " + lever.getX() + " " + lever.getY() + " " + lever.getZ());
             server.waitFor(srv -> MachineRecorder.current() == null && PathStore.latest() != limited);
             PathSnapshot full = PathStore.latest();
-            check(full.lines().size() == 1 && full.lines().getFirst().tail() == null, "full snapshot: lines " + full.lines().size());
+            check(!full.limitHit() && full.lines().size() == 1 && full.lines().getFirst().tail() == null, "full snapshot: limit hit " + full.limitHit() + ", lines " + full.lines().size());
             PathSnapshot.Line whole = full.lines().getFirst();
             LOG.info("[ghostpath] client test: full run {} points, ends {} at t+{}", whole.points(), whole.end().reason(), whole.end().tick());
             // every continued point equals the full run's, exactly, except the last one: the server's arrow is moved back 0.05 from the
@@ -131,7 +196,7 @@ public class ClientPreviewGameTest implements FabricClientGameTest {
             check(whole.end().reason().equals(why) && whole.end().tick() == contTicks[contTicks.length - 1],
                 "ends: full " + whole.end().reason() + " t+" + whole.end().tick() + ", continued " + why + " t+" + contTicks[contTicks.length - 1]);
             context.waitTicks(10);
-            context.takeScreenshot("ghostpath-full-arrow");
+            ClientShots.capture(context, "ghostpath-full-arrow");
         }
     }
 

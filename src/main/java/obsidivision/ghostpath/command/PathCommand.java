@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path watch list|stop [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}, {@code /path watch margin <n>}, {@code /path rerun [x y z]}, {@code /path area on|off}, {@code /path area watched|chunks on|off}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -45,15 +45,39 @@ public final class PathCommand {
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
+            .then(Commands.literal("rerun")
+                .executes(ctx -> rerun(ctx.getSource(), null))
+                .then(Commands.argument("pos", BlockPosArgument.blockPos())
+                    .executes(ctx -> rerun(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos")))))
             .then(Commands.literal("watch")
                 .then(Commands.literal("list").executes(ctx -> watchList(ctx.getSource())))
+                .then(Commands.literal("margin")
+                    .then(Commands.argument("n", IntegerArgumentType.integer(0, obsidivision.ghostpath.watch.Footprint.MAX_MARGIN))
+                        .executes(ctx -> watchMargin(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "n")))))
                 .then(Commands.literal("stop")
                     .executes(ctx -> watchStop(ctx.getSource(), null))
                     .then(Commands.argument("pos", BlockPosArgument.blockPos())
                         .executes(ctx -> watchStop(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos"))))))
+            .then(Commands.literal("beyond-loaded")
+                .then(Commands.literal("on").executes(ctx -> beyondLoaded(ctx.getSource(), true)))
+                .then(Commands.literal("off").executes(ctx -> beyondLoaded(ctx.getSource(), false))))
+            .then(Commands.literal("area")
+                .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "area", true)))
+                .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "area", false)))
+                .then(Commands.literal("watched")
+                    .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "watched", true)))
+                    .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "watched", false))))
+                .then(Commands.literal("chunks")
+                    .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "chunks", true)))
+                    .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "chunks", false)))))
             .then(Commands.literal("show")
                 .then(Commands.literal("on").executes(ctx -> show(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> show(ctx.getSource(), false))))
+            .then(Commands.literal("inspect")
+                .then(Commands.literal("hold").executes(ctx -> inspectMode(ctx.getSource(), false)))
+                .then(Commands.literal("toggle").executes(ctx -> inspectMode(ctx.getSource(), true))))
+            .then(Commands.literal("pins")
+                .then(Commands.literal("clear").executes(ctx -> pinsClear(ctx.getSource()))))
             .then(Commands.literal("interval")
                 .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 10_000))
                     .executes(ctx -> interval(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"), 0))
@@ -72,9 +96,45 @@ public final class PathCommand {
         return 1;
     }
 
+    private static int beyondLoaded(CommandSourceStack source, boolean on) {
+        PathSettings.beyondLoaded = on;
+        source.sendSuccess(() -> Component.literal("Beyond the loaded area: " + (on ? "on (a rerun takes chunks that are not loaded from the save and draws past them, dashed where the real world would freeze)"
+            : "off (a rerun uses loaded chunks only)")), false);
+        return 1;
+    }
+
+    /** {@code /path area on|off}, {@code /path area watched|chunks on|off}: the ghost area overlay and its two optional layers. */
+    private static int area(CommandSourceStack source, String layer, boolean on) {
+        switch (layer) {
+            case "watched" -> PathSettings.areaWatched = on;
+            case "chunks" -> PathSettings.areaChunks = on;
+            default -> PathSettings.showArea = on;
+        }
+        String what = switch (layer) {
+            case "watched" -> "watched area layer (margin " + PathSettings.watchMargin + " around the blocks the machine wrote)";
+            case "chunks" -> "copied chunks layer (widened chunks in a second colour)";
+            default -> "ghost area (the machine's footprint: written blocks stronger than read ones, the block change that started the last rerun)";
+        };
+        source.sendSuccess(() -> Component.literal(what.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + what.substring(1) + (on ? " shown" : " hidden")
+            + (on && !PathSettings.showArea && !layer.equals("area") ? " (switch /path area on to see it)" : "")), false);
+        return 1;
+    }
+
     private static int show(CommandSourceStack source, boolean on) {
         PathSettings.showPaths = on;
         source.sendSuccess(() -> Component.literal("Flight paths " + (on ? "shown" : "hidden")), false);
+        return 1;
+    }
+
+    private static int inspectMode(CommandSourceStack source, boolean toggle) {
+        PathSettings.inspectToggle = toggle;
+        source.sendSuccess(() -> Component.literal("Inspect key: " + (toggle ? "press to switch on or off" : "hold")), false);
+        return 1;
+    }
+
+    private static int pinsClear(CommandSourceStack source) {
+        PathSettings.pinsClearSerial++;
+        source.sendSuccess(() -> Component.literal("Pins cleared."), false);
         return 1;
     }
 
@@ -89,6 +149,20 @@ public final class PathCommand {
         PathSettings.tickLimit = ticks;
         source.sendSuccess(() -> Component.literal("Recording tick limit: " + ticks), false);
         return ticks;
+    }
+
+    private static int watchMargin(CommandSourceStack source, int n) {
+        PathSettings.watchMargin = n;
+        source.sendSuccess(() -> Component.literal("Watch margin: " + n + (n == 0 ? " (off: only the footprint and the neighbours of blocks the machine wrote count)"
+            : " blocks around every block the machine wrote (plus the footprint and the neighbours of written blocks)")), false);
+        return n;
+    }
+
+    private static int rerun(CommandSourceStack source, BlockPos pos) {
+        int n = LiveWatch.rerun(pos);
+        source.sendSuccess(() -> Component.literal(n == 0 ? (LiveWatch.watches().isEmpty() ? "No machine is watched." : "No such watch, or it is running now.")
+            : "Rerun queued for " + n + " watch" + (n == 1 ? "" : "es") + " (starts when the real machine is idle and one ghost is free)."), false);
+        return n;
     }
 
     private static int watchList(CommandSourceStack source) {

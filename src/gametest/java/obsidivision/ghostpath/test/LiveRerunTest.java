@@ -83,10 +83,12 @@ public class LiveRerunTest {
         for (BlockPos r : rel) {
             ready &= helper.getLevel().isPositionEntityTicking(helper.absolutePos(r));
         }
+        ready &= TestSupport.forcedChunksTicking(helper);
         if (ready) {
+            LOG.info("[ghostpath] machine area ready after {} ticks; other tests' entities removed from the forced chunks: {}", waited, TestSupport.clearForeignEntities(helper));
             then.run();
-        } else if (waited > 60000) {
-            helper.fail("machine area not entity-ticking after 60000 ticks");
+        } else if (TestSupport.overRealTime(helper)) {
+            helper.fail("machine area not entity-ticking within the real-time limit (" + TestSupport.REAL_TIME_LIMIT_S + " s)");
         } else {
             helper.runAfterDelay(1, () -> whenTicking(helper, rel, then, waited + 1));
         }
@@ -107,7 +109,7 @@ public class LiveRerunTest {
         }
         if (cond.getAsBoolean()) {
             then.run();
-        } else if (waited > limit) {
+        } else if (waited > limit && TestSupport.overRealTime(helper)) {
             finish(helper);
             helper.fail("timed out waiting for " + what + " (" + limit + " ticks); watch: " + LiveWatch.list());
         } else {
@@ -208,7 +210,7 @@ public class LiveRerunTest {
      * footprint replaces the watched one. A change outside the footprint then starts no rerun; one inside an entity area
      * does.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_piston")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_piston")
     public void pistonNextToObserverChangesTheRerun(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 1;
@@ -282,7 +284,7 @@ public class LiveRerunTest {
             for (int x = -6; x <= 20 && outside == null; x += 2) {
                 for (int z = -6; z <= 14 && outside == null; z += 2) {
                     BlockPos q = helper.absolutePos(new BlockPos(x, y, z));
-                    if (!watch.footprint().hit(q) && level.getBlockState(q).isAir() && level.isLoaded(q)) {
+                    if (watch.footprint().cause(q, PathSettings.watchMargin) == null && level.getBlockState(q).isAir() && level.isLoaded(q)) {
                         outside = q;
                     }
                 }
@@ -341,7 +343,7 @@ public class LiveRerunTest {
      * starts until the tick has run. The run (budget 1 ms) is then cancelled by a second change (P2 removed again) and starts
      * over: one completed rerun, one cancelled, and the prediction is the original machine's (TNT at the recording's tick).
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_idle")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_idle")
     public void rerunWaitsForIdleAndRestartsOnANewChange(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 1;
@@ -434,7 +436,7 @@ public class LiveRerunTest {
      * chain stops at the edge of the copied area and its footprint shows chunks outside it; the rerun is repeated once with a
      * larger area, and that run follows the line to its end. One completed rerun, one widening, nothing left beyond.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_widen")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_widen")
     public void chainBeyondTheCopiedChunksIsRerunWithALargerArea(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 5;
@@ -466,6 +468,11 @@ public class LiveRerunTest {
                         helper.assertTrue(p.footprint().containsPosition(helper.absolutePos(new BlockPos(82, 2, 2))), "the ghost did not follow the line to its end");
                         helper.assertTrue(p.ticks() >= 160, "the ghost run was too short for 80 repeaters: " + p.ticks());
                         helper.assertTrue(line.contains("widened"), "chat line: " + line);
+                        // the area overlay marks the chunks the widened run added
+                        obsidivision.ghostpath.preview.AreaData area = obsidivision.ghostpath.preview.PathStore.latest().area();
+                        helper.assertTrue(area != null && area.base() != null && area.widenedChunks() > 0 && area.chunkCells().size() == (p.copiedMax().x() - p.copiedMin().x() + 1) * (p.copiedMax().z() - p.copiedMin().z() + 1),
+                            "the snapshot's area does not mark widened chunks: " + area);
+                        LOG.info("[ghostpath] widen test: area overlay: {} chunk cells, {} widened", area.chunkCells().size(), area.widenedChunks());
                         assertNotFired(helper, level);
                         forceWide(helper, false);
                         finish(helper);
@@ -488,7 +495,7 @@ public class LiveRerunTest {
      * A new recording (or a ghost check) while a rerun is in progress cancels the rerun (one ghost at a time; the ghost holds
      * the autosave guard): the command works, the new recording includes the piston, and its watch replaces the old one.
      */
-    @GameTest(maxTicks = 120000, padding = 24, environment = "ghostpath-gametest:live_rerun_footprint")
+    @GameTest(maxTicks = TestSupport.ASYNC_MAX_TICKS, padding = 24, environment = "ghostpath-gametest:live_rerun_footprint")
     public void aRecordingCancelsARerunInProgress(GameTestHelper helper) {
         ServerLevel level = helper.getLevel();
         PathSettings.rerunBudgetMs = 1;

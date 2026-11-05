@@ -15,6 +15,18 @@ public final class PreviewSim {
     private static @Nullable Entity current;
     private static HitResult.@Nullable Type hit;
 
+    /**
+     * Counters for the effects off (read by the client game test). {@code suppressed*}: the client level was asked for a
+     * particle, sound or level event during a continuation tick and dropped it (shows the continuation does produce them, e.g.
+     * an arrow in water). {@code leaked*}: a particle reached the particle engine or a sound the sound manager during a
+     * continuation tick (must stay 0; the leaked one is dropped too).
+     */
+    public static volatile int suppressedParticles;
+    public static volatile int suppressedSounds;
+    public static volatile int suppressedLevelEvents;
+    public static volatile int leakedParticles;
+    public static volatile int leakedSounds;
+
     private PreviewSim() {
     }
 

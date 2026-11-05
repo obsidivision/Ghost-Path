@@ -32,6 +32,7 @@ public abstract class ClientLevelPreviewMixin {
     private void ghostpath$noParticles(ParticleOptions particle, boolean overrideLimiter, boolean alwaysShowParticles, double x, double y, double z,
                                        double xd, double yd, double zd, CallbackInfo ci) {
         if (PreviewSim.active()) {
+            PreviewSim.suppressedParticles++;
             ci.cancel();
         }
     }
@@ -40,6 +41,7 @@ public abstract class ClientLevelPreviewMixin {
     private void ghostpath$noSound(double x, double y, double z, SoundEvent sound, SoundSource source, float volume, float pitch, boolean distanceDelay,
                                    long seed, CallbackInfo ci) {
         if (PreviewSim.active()) {
+            PreviewSim.suppressedSounds++;
             ci.cancel();
         }
     }
@@ -47,6 +49,7 @@ public abstract class ClientLevelPreviewMixin {
     @Inject(method = "playLocalSound(Lnet/minecraft/world/entity/Entity;Lnet/minecraft/sounds/SoundEvent;Lnet/minecraft/sounds/SoundSource;FF)V", at = @At("HEAD"), cancellable = true)
     private void ghostpath$noEntitySound(Entity sourceEntity, SoundEvent sound, SoundSource source, float volume, float pitch, CallbackInfo ci) {
         if (PreviewSim.active()) {
+            PreviewSim.suppressedSounds++;
             ci.cancel();
         }
     }
@@ -54,6 +57,7 @@ public abstract class ClientLevelPreviewMixin {
     @Inject(method = "levelEvent", at = @At("HEAD"), cancellable = true)
     private void ghostpath$noLevelEvent(@Nullable Entity entity, int type, BlockPos pos, int data, CallbackInfo ci) {
         if (PreviewSim.active()) {
+            PreviewSim.suppressedLevelEvents++;
             ci.cancel();
         }
     }
@@ -61,6 +65,7 @@ public abstract class ClientLevelPreviewMixin {
     @Inject(method = "globalLevelEvent", at = @At("HEAD"), cancellable = true)
     private void ghostpath$noGlobalLevelEvent(int type, BlockPos pos, int data, CallbackInfo ci) {
         if (PreviewSim.active()) {
+            PreviewSim.suppressedLevelEvents++;
             ci.cancel();
         }
     }

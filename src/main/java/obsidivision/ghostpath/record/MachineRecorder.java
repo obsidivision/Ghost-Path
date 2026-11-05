@@ -6,15 +6,13 @@ import net.minecraft.world.level.ChunkPos;
 import obsidivision.ghostpath.GhostPath;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.level.block.ButtonBlock;
-import net.minecraft.world.level.block.LeverBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * {@code /path machine} (build step 1d): presses a lever or button as chain work and records, with the undo log and cause
+ * {@code /path machine} (build step 1d): presses a trigger ({@link Triggers}: lever, button, note block, trapdoor, door, fence gate, repeater, comparator) as chain work and records, with the undo log and cause
  * tracking on, until the chain has no pending work ({@link CauseTracker#pending()}) or the tick limit is reached; then
  * restores the world and stores the {@link Recording}.
  *
@@ -78,12 +76,9 @@ public final class MachineRecorder {
             throw new RejectedException(pos.toShortString() + " is not loaded (a recording never loads chunks)");
         }
         BlockState state = level.getBlockState(pos);
-        if (!(state.getBlock() instanceof LeverBlock) && !(state.getBlock() instanceof ButtonBlock)) {
-            throw new RejectedException("the block at " + pos.toShortString() + " is " + state.getBlock().getName().getString()
-                + ", not a lever or a button");
-        }
-        if (state.getBlock() instanceof ButtonBlock && state.getValue(ButtonBlock.POWERED)) {
-            throw new RejectedException("the button at " + pos.toShortString() + " is pressed already; try again when it has popped back");
+        String reason = Triggers.reject(pos, state);
+        if (reason != null) {
+            throw new RejectedException(reason);
         }
         BlockPos trigger = pos.immutable();
         long startTime = level.getGameTime();
@@ -117,13 +112,9 @@ public final class MachineRecorder {
         return recorder;
     }
 
-    /** What the player's click would do, without a player: LeverBlock.java:95 {@code pull}, ButtonBlock.java:112 {@code press}. */
+    /** What the player's click would do, without a player: see {@link Triggers}. */
     public static void press(ServerLevel level, BlockPos pos, BlockState state) {
-        if (state.getBlock() instanceof LeverBlock lever) {
-            lever.pull(state, level, pos, null);
-        } else if (state.getBlock() instanceof ButtonBlock button) {
-            button.press(state, level, pos, null);
-        }
+        Triggers.press(level, pos, state);
     }
 
     /** Call at the end of every server tick. */
@@ -263,7 +254,10 @@ public final class MachineRecorder {
         this.saves.end(true);
         RecordingStore.set(recording);
         // step 5: the flight preview shows the real run (copied now, on the server thread)
-        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording));
+        // (the area overlay's chunk layer: the rectangle the ghost check is going to copy, chosen the same way)
+        net.minecraft.world.level.ChunkPos[] rect = obsidivision.ghostpath.ghost.GhostCheck.chooseRectangle(this.level, recording.footprint(), recording.heightmapColumns(), recording.entityAreas(), null);
+        int[] copied = rect == null ? null : new int[] {rect[0].x(), rect[0].z(), rect[1].x(), rect[1].z()};
+        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording, copied));
         this.listener.done(recording);
     }
 

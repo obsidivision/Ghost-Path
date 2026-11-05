@@ -6,7 +6,13 @@
   "environment": "*",
   "entrypoints": {
     "fabric-client-gametest": [
-      "obsidivision.ghostpath.test.ClientPreviewGameTest"
+      "obsidivision.ghostpath.test.ClientPreviewGameTest",
+      "obsidivision.ghostpath.test.GizmoVisibilityGameTest",
+      "obsidivision.ghostpath.test.ContinuationEffectsGameTest",
+      "obsidivision.ghostpath.test.InspectorGameTest",
+      "obsidivision.ghostpath.test.ClientDuperGameTest",
+      "obsidivision.ghostpath.test.FreezeDrawGameTest",
+      "obsidivision.ghostpath.test.AreaGameTest"
     ],
     "fabric-gametest": [
       "obsidivision.ghostpath.test.SmokeTest",
@@ -23,7 +29,20 @@
       "obsidivision.ghostpath.test.GhostCheckTest",
       "obsidivision.ghostpath.test.LiveRerunTest",
       "obsidivision.ghostpath.test.LiveRerunRulingsTest",
-      "obsidivision.ghostpath.test.FlightPreviewTest"
+      "obsidivision.ghostpath.test.FlightPreviewTest",
+      "obsidivision.ghostpath.test.InspectorTest",
+      "obsidivision.ghostpath.test.DustDuperTest",
+      "obsidivision.ghostpath.test.GhostDiskTest",
+      "obsidivision.ghostpath.test.GhostDiskTicksTest",
+      "obsidivision.ghostpath.test.BeyondLoadedTest",
+      "obsidivision.ghostpath.test.LiveRerunUnloadedTest",
+      "obsidivision.ghostpath.test.LazyCoreTest",
+      "obsidivision.ghostpath.test.GhostDiskEntitiesTest",
+      "obsidivision.ghostpath.test.RerunTriggersTest",
+      "obsidivision.ghostpath.test.TriggersTest",
+      "obsidivision.ghostpath.test.LongMachineTest",
+      "obsidivision.ghostpath.test.AreaTest",
+      "obsidivision.ghostpath.test.LootDropsTest"
     ]
   },
   "depends": {

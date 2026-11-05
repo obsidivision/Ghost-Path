@@ -61,6 +61,8 @@ public final class LiveWatch {
      * edge again; the largest margin up to this that is loaded is used.
      */
     public static final int WIDEN_MARGIN = 3;
+    /** How many times in a row a rerun may widen its area (each adds WIDEN_MARGIN chunks around the footprint it just saw). */
+    public static final int MAX_WIDEN_ROUNDS = 4;
 
     private static final List<Watched> WATCHES = new ArrayList<>();
     private static long serverTick;
@@ -95,6 +97,30 @@ public final class LiveWatch {
         WATCHES.remove(w);
     }
 
+    /**
+     * {@code /path rerun [x y z]}: queues a rerun of the watch with that trigger (all watches when {@code trigger} is null) now: no
+     * quiet period, but it still waits for the real machine to be idle and its chunks to be loaded, and for any run in progress
+     * (one ghost at a time). Returns how many watches were queued.
+     */
+    public static int rerun(@Nullable BlockPos trigger) {
+        int n = 0;
+        for (Watched w : WATCHES) {
+            if (trigger == null || w.trigger().equals(trigger)) {
+                if (run != null && run.watch == w) {
+                    continue; // already running
+                }
+                w.dirty = true;
+                w.forced = true;
+                w.lastWhat = "forced by /path rerun";
+                w.lastChangePos = null;
+                w.lastChangeLabel = "forced";
+                w.status = "rerun queued";
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** Stops every watch. Returns how many there were. */
     public static int stopAll() {
         int n = WATCHES.size();
@@ -127,12 +153,12 @@ public final class LiveWatch {
         for (Watched w : WATCHES) {
             out.add("#" + i++ + " " + w.trigger().toShortString() + ": " + w.status() + "; reruns " + w.reruns()
                 + (w.cancelled() > 0 ? ", cancelled " + w.cancelled() : "") + (w.failures() > 0 ? ", failed " + w.failures() : "")
-                + "; footprint " + w.footprint() + "; last area " + w.lastArea());
+                + "; footprint " + w.footprint() + "; last area " + w.lastArea() + "; last change: " + w.lastWhat);
             Prediction p = w.latest();
             if (p != null) {
                 out.add("   last rerun: " + p.ticks() + " ticks, " + p.tntSpawned() + " TNT" + (p.tntSpawnTicks().isEmpty() ? "" : " (spawn t+"
                     + p.tntSpawnTicks().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", t+")) + ")")
-                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (ghost created " + p.createMillis() + " ms, copy " + p.copyMillis() + " ms, longest slice "
+                    + ", " + p.serverTicks() + " server ticks, " + p.millis() + " ms (ghost created " + p.createMillis() + " ms, copy " + p.copyMillis() + " ms over " + p.copyTicks() + " ticks, longest slice "
                     + p.maxSliceMillis() + " ms, budget " + PathSettings.rerunBudgetMs + " ms)");
             }
         }
@@ -150,15 +176,31 @@ public final class LiveWatch {
      * A real block state changed ({@code LevelChunk.setBlockState} returned a changed state). Cheap when nothing is watched.
      * Ignored while a recording runs: its chain and its restore write the footprint.
      */
-    public static void onBlockChanged(ServerLevel level, BlockPos pos) {
-        if (ignoring()) {
+    public static void onBlockChanged(ServerLevel level, BlockPos pos, net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState now) {
+        if (ignoring() || old.isAir() && now.isAir()) { // air to air (cave air, void air) changes nothing a machine can see
+            return;
+        }
+        // a chunk that is not (yet) loaded as a full chunk is not changed by a player or a machine: its writes are loading work
+        if (level.getChunkSource().getChunkNow(pos.getX() >> 4, pos.getZ() >> 4) == null) {
             return;
         }
         for (Watched w : WATCHES) {
-            if (level.dimension().equals(w.recording().dimension()) && w.footprint.hit(pos)) {
-                markChanged(w);
+            if (!level.dimension().equals(w.recording().dimension())) {
+                continue;
+            }
+            Footprint.Cause cause = w.footprint.cause(pos, PathSettings.watchMargin);
+            if (cause != null) {
+                String what = label(old, now);
+                markChanged(w, "block at " + pos.toShortString() + " is now " + now + (cause == Footprint.Cause.FOOTPRINT ? "" : cause == Footprint.Cause.NEIGHBOR
+                    ? " (next to a block the machine wrote)" : " (within " + PathSettings.watchMargin + " of a block the machine wrote)"), pos.immutable(), what);
             }
         }
+    }
+
+    /** "piston placed", "stone broken", "lever changed": the short label of a block change. */
+    static String label(net.minecraft.world.level.block.state.BlockState old, net.minecraft.world.level.block.state.BlockState now) {
+        String name = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey((now.isAir() ? old : now).getBlock()).getPath();
+        return name + (old.isAir() ? " placed" : now.isAir() ? " broken" : " changed");
     }
 
     /**
@@ -173,7 +215,7 @@ public final class LiveWatch {
         BlockPos pos = be.getBlockPos();
         for (Watched w : WATCHES) {
             if (level.dimension().equals(w.recording().dimension()) && w.footprint.containsPosition(pos)) {
-                markChanged(w);
+                markChanged(w, "container at " + pos.toShortString());
             }
         }
     }
@@ -183,7 +225,14 @@ public final class LiveWatch {
         return WATCHES.isEmpty() || MachineRecorder.current() != null || UndoLog.active() != null;
     }
 
-    private static void markChanged(Watched w) {
+    private static void markChanged(Watched w, String what) {
+        markChanged(w, what, null, what);
+    }
+
+    private static void markChanged(Watched w, String what, @Nullable BlockPos pos, String label) {
+        w.lastWhat = what;
+        w.lastChangePos = pos;
+        w.lastChangeLabel = label;
         w.dirty = true;
         w.lastChange = serverTick;
         w.changes++;
@@ -231,7 +280,7 @@ public final class LiveWatch {
             }
             Rerun r = run;
             try {
-                if (r.step(Math.max(1L, PathSettings.rerunBudgetMs) * 1_000_000L)) {
+                if (r.step(Math.max(0L, PathSettings.rerunBudgetMs) * 1_000_000L)) {
                     run = null;
                     finished(server, r);
                 } else {
@@ -252,7 +301,7 @@ public final class LiveWatch {
                 continue;
             }
             long quiet = serverTick - w.lastChange;
-            if (quiet < QUIET_TICKS) {
+            if (quiet < QUIET_TICKS && !w.forced) {
                 w.status = "changed, waiting for quiet (" + quiet + "/" + QUIET_TICKS + " ticks)";
                 continue;
             }
@@ -284,14 +333,22 @@ public final class LiveWatch {
             ServerLevel level = server.getLevel(w.recording().dimension());
             if (level != null && w.entities.scan(level, w.footprint)) {
                 w.entityChanges++;
-                markChanged(w);
+                markChanged(w, "entity change");
             }
         }
     }
 
     private static void start(Watched w, ServerLevel level, ChunkPos[] rect, boolean widened) {
+        w.widenRounds = widened ? w.widenRounds + 1 : 0;
+        if (!widened) {
+            w.baseRect = new int[] {rect[0].x(), rect[0].z(), rect[1].x(), rect[1].z()};
+        }
         try {
             run = new Rerun(w, level, rect[0], rect[1], widened);
+            if (!widened) {
+                w.trigger = new Watched.Change(w.lastChangePos, w.forced ? "rerun: forced" : "rerun: " + w.lastChangeLabel, serverTick);
+            }
+            w.forced = false;
             w.dirty = false;
             w.status = "rerunning: " + run.phase();
         } catch (IOException | RuntimeException e) {
@@ -315,10 +372,11 @@ public final class LiveWatch {
             return;
         }
         ServerLevel level = r.real();
-        if (!p.beyond().isEmpty() && !r.widened) {
-            // the chain reached beyond the copied chunks: copy a larger area and rerun once
+        if (!p.beyond().isEmpty() && w.widenRounds < MAX_WIDEN_ROUNDS) {
+            // the chain reached beyond the copied chunks: copy a larger area (chunks that are not loaded come from the save) and rerun;
+            // again if it still reaches beyond, up to MAX_WIDEN_ROUNDS times
             ChunkPos[] rect = GhostCheck.chooseRectangle(level, p.footprint().positions(), p.footprint().columns(), p.footprint().areas(),
-                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN);
+                new int[] {r.min.x(), r.min.z(), r.max.x(), r.max.z()}, WIDEN_MARGIN, PathSettings.beyondLoaded);
             if (rect != null && (!rect[0].equals(r.min) || !rect[1].equals(r.max))) {
                 LOGGER.info("[ghostpath] rerun of {} reached beyond the copied chunks ({} chunks); rerunning with {}..{}", w.trigger().toShortString(),
                     p.beyond().size(), rect[0], rect[1]);
@@ -338,7 +396,10 @@ public final class LiveWatch {
         if (!p.beyond().isEmpty()) {
             line.append(" (the chain reaches beyond the copied chunks, ").append(p.beyond().size()).append(" chunks not copied: the prediction may be wrong)");
         }
-        line.append(" (ghost created in ").append(p.createMillis()).append(" ms)");
+        line.append(" (ghost created in ").append(p.createMillis()).append(" ms, copied in ").append(p.copyMillis()).append(" ms over ").append(p.copyTicks()).append(p.copyTicks() == 1 ? " tick)" : " ticks)");
+        if (!p.notSimulated().isEmpty()) {
+            line.append(" (").append(String.join("; ", p.notSimulated())).append(")");
+        }
         if (p.triggerNote() != null) {
             line.append(" (").append(p.triggerNote()).append(")");
         }
@@ -358,9 +419,29 @@ public final class LiveWatch {
         w.lastRect = new int[] {p.copiedMin().x(), p.copiedMin().z(), p.copiedMax().x(), p.copiedMax().z()};
         w.reruns++;
         // step 5: the flight preview shows this prediction (built from copies, the ghost is gone: Rerun.finish discarded it)
-        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString()));
+        obsidivision.ghostpath.preview.PathSnapshot snap = obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString(), w.baseRect,
+            changeOf(w)));
+        // paths the real world would freeze (the ghost took their chunks from the save, or they are loaded but not ticking)
+        List<obsidivision.ghostpath.preview.PathSnapshot.Line> frozen = snap.lines().stream().filter(l -> l.freeze() != null).toList();
+        if (!frozen.isEmpty()) {
+            line.append(" | ").append(frozen.stream().mapToInt(obsidivision.ghostpath.preview.PathSnapshot.Line::count).sum()).append(" path(s) leave the area where entities tick: ");
+            line.append(frozen.stream().limit(3).map(l -> l.type().replace("minecraft:", "") + (l.count() > 1 ? " x" + l.count() : "") + " " + obsidivision.ghostpath.preview.PathSnapshot.endText(l)
+                + " [" + l.freeze().kind() + "]").collect(java.util.stream.Collectors.joining("; ")));
+            if (frozen.size() > 3) {
+                line.append("; +").append(frozen.size() - 3).append(" more");
+            }
+        }
         w.status = w.dirty ? "changed again, waiting for quiet" : "idle";
         w.chat.accept(line.toString());
+    }
+
+    /** The block change that started the rerun just finished, for the area overlay (a forced rerun is labelled at the trigger). */
+    private static obsidivision.ghostpath.preview.AreaData.@Nullable Change changeOf(Watched w) {
+        Watched.Change c = w.lastTrigger();
+        if (c == null) {
+            return null;
+        }
+        return new obsidivision.ghostpath.preview.AreaData.Change(c.pos() != null ? c.pos() : w.trigger(), c.label(), System.currentTimeMillis());
     }
 
     // ---- is the real machine idle? ----

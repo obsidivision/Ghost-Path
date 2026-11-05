@@ -43,7 +43,7 @@ public abstract class LevelChunkMixin {
     private void ghostpath$afterSetBlockState(BlockPos pos, BlockState state, int flags, CallbackInfoReturnable<BlockState> cir) {
         if (cir.getReturnValue() != null && obsidivision.ghostpath.watch.LiveWatch.active()
             && ((LevelChunk) (Object) this).getLevel() instanceof net.minecraft.server.level.ServerLevel level) {
-            obsidivision.ghostpath.watch.LiveWatch.onBlockChanged(level, pos);
+            obsidivision.ghostpath.watch.LiveWatch.onBlockChanged(level, pos, cir.getReturnValue(), state);
         }
     }
 
