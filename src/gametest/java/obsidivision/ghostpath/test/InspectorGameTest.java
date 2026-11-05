@@ -51,6 +51,7 @@ public class InspectorGameTest implements FabricClientGameTest {
 
     @Override
     public void runTest(ClientGameTestContext context) {
+        obsidivision.ghostpath.PathSettings.hoverDetail = "full"; // the tests read the exact lines
         try (TestSingleplayerContext singleplayer = context.worldBuilder().create()) {
             TestServerContext server = singleplayer.getServer();
             BlockPos[] machine = new BlockPos[2];

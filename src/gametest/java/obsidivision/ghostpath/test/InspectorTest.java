@@ -48,6 +48,16 @@ public class InspectorTest {
         return Picker.pick(s, origin, dir, max, l -> 0.0);
     }
 
+    /** The short panel keeps what happens and rounds the numbers; nothing is invented, the full lines stay the source. */
+    @GameTest
+    public void theCompactPanelIsShortAndKeepsTheFacts(GameTestHelper helper) {
+        List<String> full = List.of("minecraft:tnt  t+16  (recorded)", "entity #6", "pos x -32.0199999713", "pos y 25.28808940827", "pos z -212.5100000095",
+            "block -33 25 -213", "in block x 0.98", "in block y 0.28", "in block z 0.48", "vel x 0.96040003738", "vel y -0.4828", "vel z 0.0", "fuse 65", "single");
+        List<String> c = PanelText.compact(full);
+        helper.assertTrue(c.equals(List.of("minecraft:tnt  t+16  (recorded)", "pos -32.02, 25.29, -212.51", "vel 0.960, -0.483, 0.000", "fuse 65")), "compact: " + c);
+        helper.succeed();
+    }
+
     @GameTest
     public void aRayPicksThePathPointItPassesNearest(GameTestHelper helper) {
         List<FlightPoint> pts = new ArrayList<>();

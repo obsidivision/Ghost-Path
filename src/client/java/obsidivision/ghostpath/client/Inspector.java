@@ -179,12 +179,15 @@ public final class Inspector {
         if (!PathSettings.showPaths || level == null) {
             return;
         }
+        if (PathSettings.hoverDetail.equals("off") && !inspecting()) {
+            return;
+        }
         boolean here = s != null && level.dimension().identifier().toString().equals(s.dimension());
         Camera camera = mc.gameRenderer.mainCamera();
         Vec3 origin = camera.position();
         Vector3fc f = camera.forwardVector();
         Vec3 dir = new Vec3(f.x(), f.y(), f.z());
-        double max = Picker.MAX_DISTANCE;
+        double max = Math.min(Picker.MAX_DISTANCE, PathSettings.hoverRange);
         if (!inspecting()) { // a block in the way hides what is behind it
             HitResult block = level.clip(new ClipContext(origin, origin.add(dir.scale(max)), ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, CollisionContext.empty()));
             if (block.getType() != HitResult.Type.MISS) {
@@ -428,12 +431,19 @@ public final class Inspector {
         GhostHover ghost = hoverGhost;
         TailHover tail = hoverTail;
         List<String> hover = hoverPanel(ghost);
+        if (PathSettings.hoverDetail.equals("key") && !inspecting()) {
+            hover = List.of();
+        } else if (!PathSettings.hoverDetail.equals("full") && !hover.isEmpty()) {
+            hover = PanelText.compact(hover);
+        }
         lastHoverPanel = hover;
         if (!hover.isEmpty() && !(ghost != null && PINS.contains(pinOf(ghost)))) { // a pinned point is shown by its pin
             panelsDrawn++;
             int color = hoverSaved != null ? PathRenderer.color(hoverSaved.path().kind()) : ghost != null ? PathRenderer.color(ghost.path().kind()) : tail != null ? PathRenderer.color(tail.snapshot().lines().get(tail.line()).kind()) : Style.REAL_COLOR;
             Measured ms = measure(font, hover);
-            PanelLayout.Rect r = PanelLayout.beside(g.guiWidth(), g.guiHeight(), g.guiWidth() / 2, g.guiHeight() / 2, ms.w(), ms.h(), 14, 2); // flips to the left at the right edge
+            PanelLayout.Rect r = PathSettings.hoverAnchor.equals("corner")
+                ? PanelLayout.clamp(g.guiWidth(), g.guiHeight(), 6, 6, ms.w(), ms.h(), 2)
+                : PanelLayout.beside(g.guiWidth(), g.guiHeight(), g.guiWidth() / 2, g.guiHeight() / 2, ms.w(), ms.h(), 14, 2); // flips to the left at the right edge
             panel(g, font, ms, r.x(), r.y(), color);
         }
         // pins down the right edge; when the next does not fit above the bottom, a new column to the left

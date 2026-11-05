@@ -121,6 +121,41 @@ public final class PanelText {
         vector(out, "in block", x - Math.floor(x), y - Math.floor(y), z - Math.floor(z));
     }
 
+    /**
+     * The short form of a panel ({@code /path hover compact}): the header, the position and the velocity on one line each (rounded), and the lines
+     * that say what happens (fuse, end, frozen, stack count, real/saved notes). Dropped: the entity id line, the block and in-block rows, "single".
+     */
+    public static List<String> compact(List<String> lines) {
+        List<String> out = new ArrayList<>();
+        String[] pos = new String[3];
+        String[] vel = new String[3];
+        for (int i = 0; i < lines.size(); i++) {
+            String l = lines.get(i);
+            if (i == 0 || l.equals("PIN")) {
+                out.add(l);
+            } else if (l.startsWith("pos ") || l.startsWith("vel ")) {
+                String[] t = l.split(" ", 3);
+                int axis = t[1].charAt(0) - 'x';
+                double v;
+                try {
+                    v = Double.parseDouble(t[2]);
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                (t[0].equals("pos") ? pos : vel)[axis] = String.format(java.util.Locale.ROOT, t[0].equals("pos") ? "%.2f" : "%.3f", v);
+                if (axis == 2) {
+                    String[] a = t[0].equals("pos") ? pos : vel;
+                    out.add(t[0] + " " + a[0] + ", " + a[1] + ", " + a[2]);
+                }
+            } else if (l.startsWith("entity ") || l.startsWith("block ") || l.startsWith("in block ") || l.equals("single") || l.startsWith("client-side copy")) {
+                continue;
+            } else {
+                out.add(l);
+            }
+        }
+        return out;
+    }
+
     private static void vector(List<String> out, String name, double x, double y, double z) {
         out.add(name + " x " + x);
         out.add(name + " y " + y);
