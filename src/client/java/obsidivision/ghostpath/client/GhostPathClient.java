@@ -30,6 +30,7 @@ public class GhostPathClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        obsidivision.ghostpath.preview.PathStore.continuationSource = Tails::copyOut;
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> {
             PathRenderer.render();
             AreaRenderer.render();

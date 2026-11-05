@@ -260,7 +260,8 @@ public final class MachineRecorder {
         // (the area overlay's chunk layer: the rectangle the ghost check is going to copy, chosen the same way)
         net.minecraft.world.level.ChunkPos[] rect = obsidivision.ghostpath.ghost.GhostCheck.chooseRectangle(this.level, recording.footprint(), recording.heightmapColumns(), recording.entityAreas(), null);
         int[] copied = rect == null ? null : new int[] {rect[0].x(), rect[0].z(), rect[1].x(), rect[1].z()};
-        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording, copied));
+        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording, copied)
+            .withOrigin(new obsidivision.ghostpath.preview.PathSnapshot.Origin(recording.trigger().getX(), recording.trigger().getY(), recording.trigger().getZ(), recording.startGameTime())));
         this.listener.done(recording);
     }
 

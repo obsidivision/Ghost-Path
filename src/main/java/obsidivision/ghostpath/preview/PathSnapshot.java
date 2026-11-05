@@ -18,16 +18,30 @@ import org.jspecify.annotations.Nullable;
  * @param limitHit   the run stopped at the tick limit
  * @param lines      one entry per path, identical paths merged ({@link Line#count})
  * @param area       the ghost area overlay's data from the same run (footprint boxes, watched margin, copied chunks, last trigger), or null
+ * @param origin     the machine's trigger and the game time of the press (for saved paths), or null
  */
-public record PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines, @Nullable AreaData area) {
+public record PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines, @Nullable AreaData area, @Nullable Origin origin) {
 
     public PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines) {
-        this(serial, source, dimension, ticks, limitHit, lines, null);
+        this(serial, source, dimension, ticks, limitHit, lines, null, null);
+    }
+
+    public PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines, @Nullable AreaData area) {
+        this(serial, source, dimension, ticks, limitHit, lines, area, null);
     }
 
     /** The same snapshot with the area data (the paths are shared, not copied). */
     public PathSnapshot withArea(@Nullable AreaData area) {
-        return new PathSnapshot(this.serial, this.source, this.dimension, this.ticks, this.limitHit, this.lines, area);
+        return new PathSnapshot(this.serial, this.source, this.dimension, this.ticks, this.limitHit, this.lines, area, this.origin);
+    }
+
+    /** The same snapshot with the machine's trigger and press time. */
+    public PathSnapshot withOrigin(@Nullable Origin origin) {
+        return new PathSnapshot(this.serial, this.source, this.dimension, this.ticks, this.limitHit, this.lines, this.area, origin);
+    }
+
+    /** The machine's trigger block and the level's game time when it was pressed. */
+    public record Origin(int x, int y, int z, long gameTime) {
     }
 
     /**

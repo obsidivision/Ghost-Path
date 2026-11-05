@@ -3,6 +3,11 @@ package obsidivision.ghostpath.command;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.builder.RequiredArgumentBuilder;
+import obsidivision.ghostpath.saved.SavedPath;
+import obsidivision.ghostpath.saved.SavedStore;
+import obsidivision.ghostpath.preview.PathStore;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.exceptions.SimpleCommandExceptionType;
 import net.minecraft.commands.CommandSourceStack;
@@ -42,6 +47,21 @@ public final class PathCommand {
             .then(Commands.literal("machine")
                 .then(Commands.argument("pos", BlockPosArgument.blockPos())
                     .executes(ctx -> machine(ctx.getSource(), BlockPosArgument.getBlockPos(ctx, "pos")))))
+            .then(Commands.literal("save")
+                .then(Commands.argument("name", StringArgumentType.word())
+                    .executes(ctx -> save(ctx.getSource(), StringArgumentType.getString(ctx, "name"), false))
+                    .then(Commands.literal("replace").executes(ctx -> save(ctx.getSource(), StringArgumentType.getString(ctx, "name"), true)))))
+            .then(Commands.literal("saved")
+                .then(Commands.literal("list").executes(ctx -> savedList(ctx.getSource(), false))
+                    .then(Commands.literal("archived").executes(ctx -> savedList(ctx.getSource(), true))))
+                .then(Commands.literal("show").then(namedAction("show", (src, n) -> store(src).setShown(n, true))))
+                .then(Commands.literal("hide").then(namedAction("hide", (src, n) -> store(src).setShown(n, false))))
+                .then(Commands.literal("archive").then(namedAction("archive", (src, n) -> store(src).archive(n))))
+                .then(Commands.literal("unarchive").then(namedAction("unarchive", (src, n) -> store(src).unarchive(n))))
+                .then(Commands.literal("delete")
+                    .then(Commands.argument("name", StringArgumentType.word())
+                        .executes(ctx -> report(ctx.getSource(), store(ctx.getSource()).delete(StringArgumentType.getString(ctx, "name"), false)))
+                        .then(Commands.literal("confirm").executes(ctx -> report(ctx.getSource(), store(ctx.getSource()).delete(StringArgumentType.getString(ctx, "name"), true)))))))
             .then(Commands.literal("kick")
                 .then(Commands.literal("on").executes(ctx -> kick(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> kick(ctx.getSource(), false))))
@@ -87,6 +107,62 @@ public final class PathCommand {
             .then(Commands.literal("limit")
                 .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 1_000_000))
                     .executes(ctx -> limit(ctx.getSource(), IntegerArgumentType.getInteger(ctx, "ticks"))))));
+    }
+
+    private static SavedStore store(CommandSourceStack source) {
+        return SavedStore.of(source.getServer());
+    }
+
+    private static int report(CommandSourceStack source, SavedStore.Result r) {
+        if (r.ok()) {
+            source.sendSuccess(() -> Component.literal(r.message()), false);
+        } else {
+            source.sendFailure(Component.literal(r.message()));
+        }
+        return r.ok() ? 1 : 0;
+    }
+
+    private static RequiredArgumentBuilder<CommandSourceStack, String> namedAction(String what, java.util.function.BiFunction<CommandSourceStack, String, SavedStore.Result> action) {
+        return Commands.argument("name", StringArgumentType.word()).executes(ctx -> report(ctx.getSource(), action.apply(ctx.getSource(), StringArgumentType.getString(ctx, "name"))));
+    }
+
+    /** {@code /path save <name> [replace]}: the latest prediction under a name (a snapshot; it never reruns). */
+    private static int save(CommandSourceStack source, String name, boolean replace) {
+        obsidivision.ghostpath.preview.PathSnapshot s = PathStore.latest();
+        return report(source, store(source).save(name, replace, s, s == null ? java.util.Map.of() : PathStore.continuations(s)));
+    }
+
+    private static int savedList(CommandSourceStack source, boolean archived) {
+        SavedStore st = store(source);
+        java.util.List<SavedPath> list = st.list(archived);
+        if (list.isEmpty()) {
+            source.sendSuccess(() -> Component.literal(archived ? "No archived paths." : "No saved paths."), false);
+        }
+        for (SavedPath p : list) {
+            source.sendSuccess(() -> Component.literal(p.name() + ": " + p.dimension() + " " + p.triggerText() + ", " + p.tnt() + " TNT, " + formatDate(p.date())
+                + (archived ? ", archived" : p.shown() ? ", shown" : ", hidden")), false);
+        }
+        warnSavedFiles(source.getServer(), source.getPlayer());
+        return list.size();
+    }
+
+    /** Date of a save for lists and panels: local time, minutes. */
+    public static String formatDate(String iso) {
+        try {
+            return java.time.LocalDateTime.ofInstant(java.time.Instant.parse(iso), java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm"));
+        } catch (RuntimeException e) {
+            return iso;
+        }
+    }
+
+    /** Chat warnings for saved-path files that were skipped (once per world join, and in {@code /path saved list}). */
+    public static void warnSavedFiles(net.minecraft.server.MinecraftServer server, ServerPlayer player) {
+        if (player == null) {
+            return;
+        }
+        for (String w : SavedStore.of(server).warnings()) {
+            player.sendSystemMessage(Component.literal("Ghost Path: saved path " + w));
+        }
     }
 
     private static int kick(CommandSourceStack source, boolean on) {

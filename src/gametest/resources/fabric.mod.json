@@ -43,7 +43,8 @@
       "obsidivision.ghostpath.test.TriggersTest",
       "obsidivision.ghostpath.test.LongMachineTest",
       "obsidivision.ghostpath.test.AreaTest",
-      "obsidivision.ghostpath.test.LootDropsTest"
+      "obsidivision.ghostpath.test.LootDropsTest",
+      "obsidivision.ghostpath.test.SavedPathsTest"
     ]
   },
   "depends": {

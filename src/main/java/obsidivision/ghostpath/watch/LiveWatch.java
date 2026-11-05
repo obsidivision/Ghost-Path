@@ -423,7 +423,8 @@ public final class LiveWatch {
         w.reruns++;
         // step 5: the flight preview shows this prediction (built from copies, the ghost is gone: Rerun.finish discarded it)
         obsidivision.ghostpath.preview.PathSnapshot snap = obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString(), w.baseRect,
-            changeOf(w)));
+            changeOf(w)).withOrigin(new obsidivision.ghostpath.preview.PathSnapshot.Origin(w.recording().trigger().getX(), w.recording().trigger().getY(),
+            w.recording().trigger().getZ(), w.recording().startGameTime())));
         // paths the real world would freeze (the ghost took their chunks from the save, or they are loaded but not ticking)
         List<obsidivision.ghostpath.preview.PathSnapshot.Line> frozen = snap.lines().stream().filter(l -> l.freeze() != null).toList();
         if (!frozen.isEmpty()) {

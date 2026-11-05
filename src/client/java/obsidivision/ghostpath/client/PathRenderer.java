@@ -10,6 +10,7 @@ import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.preview.PathSnapshot;
 import obsidivision.ghostpath.preview.PathStore;
 import obsidivision.ghostpath.record.CauseTracker.FlightKind;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Draws the latest {@link PathSnapshot} (build step 5) with the game's own gizmos (lines, points, billboard text), added in
@@ -102,74 +103,96 @@ public final class PathRenderer {
         PathSnapshot s = PathStore.latest();
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
-        if (s == null || level == null || !level.dimension().identifier().toString().equals(s.dimension())) {
+        if (level == null) {
             return;
         }
+        String dim = level.dimension().identifier().toString();
         int interval = Math.max(1, PathSettings.dotInterval);
         int offset = PathSettings.dotOffset;
         int[] budget = {MAX_SEGMENTS};
-        List<PathSnapshot.Line> lines = s.lines();
         framesDrawn++;
-        lastLines = lines.size();
-        for (int i = 0; i < lines.size(); i++) {
-            PathSnapshot.Line l = lines.get(i);
-            int color = color(l.kind());
-            double up = lift(l.kind());
-            int n = l.points();
-            if (n == 0) {
-                continue;
+        lastLines = 0;
+        if (s != null && dim.equals(s.dimension())) {
+            List<PathSnapshot.Line> lines = s.lines();
+            lastLines = lines.size();
+            for (int i = 0; i < lines.size(); i++) {
+                Tails.Job job = Tails.job(s, i);
+                drawLine(lines.get(i), job == null ? null : job.copyOut(), null, interval, offset, budget);
             }
-            Tails.Job job = Tails.job(s, i);
-            boolean continued = job != null && job.points() > 0;
-            int freezeAt = l.freeze() == null ? n : l.freeze().point();
-            segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued, freezeAt, l::movedWhileFrozen);
-            // frozen in the run itself (session "frozen entities"): a dot where it stopped ticking, labelled with the frozen ticks
-            for (PathSnapshot.Stasis st : l.stasis()) {
-                Vec3 sp = at(l.xyz(), st.point(), up);
-                Gizmos.point(sp, STASIS_COLOR, END_DOT_SIZE);
-                if (st.resumed() || st.resume() >= 0) {
-                    label("frozen " + st.frozenTicks() + " ticks (" + st.kind() + ")", sp.add(0.0, -0.45, 0.0), STASIS_COLOR);
-                }
-            }
-            Vec3 start = at(l.xyz(), 0, up);
-            // where the real world freezes it: from there the path is what the ghost predicts for a ticking chunk
-            double endLift = 0.3;
-            if (l.freeze() != null) {
-                Vec3 fp = at(l.xyz(), freezeAt, up);
-                Gizmos.point(fp, FREEZE_COLOR, END_DOT_SIZE);
-                // below the line: the end label (above it) is long and would cover this one
-                label("real: freezes here (" + l.freeze().kind() + ")", fp.add(0.0, -0.45, 0.0), FREEZE_COLOR);
-            }
-            if (l.count() > 1) {
-                label("×" + l.count(), start.add(0.0, 0.3, 0.0), color);
-            }
-            Vec3 end = at(l.xyz(), n - 1, up);
-            if (job == null) {
-                label(PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
-            } else {
-                // the ghost run stopped here at the tick limit; the rest is the client's own continuation
-                Gizmos.point(end, color, END_DOT_SIZE);
-                label(PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
-                int m = job.points();
-                if (m > 0) {
-                    long[] ticks = job.ticks.toLongArray();
-                    double[] xyz = new double[m * 3 + 3];
-                    xyz[0] = l.xyz()[3 * n - 3];
-                    xyz[1] = l.xyz()[3 * n - 2];
-                    xyz[2] = l.xyz()[3 * n - 1];
-                    System.arraycopy(job.xyz.elements(), 0, xyz, 3, m * 3);
-                    long[] all = new long[m + 1];
-                    all[0] = l.end().tick();
-                    System.arraycopy(ticks, 0, all, 1, m);
-                    int light = lighter(color);
-                    segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true, m + 1, k -> false);
-                    Vec3 last = at(xyz, m, up);
-                    String why = job.done() ? job.endReason() + " t+" + all[m] : "continuing... t+" + all[m];
-                    label("continued: " + why, last.add(0.0, 0.3, 0.0), light);
-                }
+        }
+        // saved paths (session D): lighter, with their name on the start and end labels; only in their own dimension
+        for (obsidivision.ghostpath.saved.SavedPath sp : obsidivision.ghostpath.saved.SavedStore.inDimension(obsidivision.ghostpath.saved.SavedStore.visible(), dim)) {
+            for (int i = 0; i < sp.lines().size(); i++) {
+                drawLine(sp.lines().get(i), sp.continuations().get(i), sp.name(), interval, offset, budget);
             }
         }
         lastSegments = MAX_SEGMENTS - budget[0];
+    }
+
+    /** Alpha of a saved path's colours (they are drawn lighter than the live prediction). */
+    static final int SAVED_ALPHA = 0x90;
+
+    static int withAlpha(int argb, int alpha) {
+        return (argb & 0x00FFFFFF) | alpha << 24;
+    }
+
+    /**
+     * One path. {@code cont}: its continuation points (the live client's, or the stored ones of a saved path), or null; {@code savedName}:
+     * null for the live prediction, else the name of the saved path (lighter colours, the name on the start and end label).
+     */
+    private static void drawLine(PathSnapshot.Line l, obsidivision.ghostpath.saved.SavedPath.@Nullable Cont cont, @Nullable String savedName, int interval, int offset, int[] budget) {
+        boolean saved = savedName != null;
+        String tag = saved ? "[" + savedName + "] " : "";
+        int color = saved ? withAlpha(lighter(color(l.kind())), SAVED_ALPHA) : color(l.kind());
+        double up = lift(l.kind());
+        int n = l.points();
+        if (n == 0) {
+            return;
+        }
+        boolean continued = cont != null && cont.points() > 0;
+        int freezeAt = l.freeze() == null ? n : l.freeze().point();
+        segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued, freezeAt, l::movedWhileFrozen);
+        for (PathSnapshot.Stasis st : l.stasis()) {
+            Vec3 sp = at(l.xyz(), st.point(), up);
+            Gizmos.point(sp, STASIS_COLOR, END_DOT_SIZE);
+            if (st.resumed() || st.resume() >= 0) {
+                label(tag + "frozen " + st.frozenTicks() + " ticks (" + st.kind() + ")", sp.add(0.0, -0.45, 0.0), STASIS_COLOR);
+            }
+        }
+        Vec3 start = at(l.xyz(), 0, up);
+        double endLift = 0.3;
+        if (l.freeze() != null) {
+            Vec3 fp = at(l.xyz(), freezeAt, up);
+            Gizmos.point(fp, FREEZE_COLOR, END_DOT_SIZE);
+            label(tag + "real: freezes here (" + l.freeze().kind() + ")", fp.add(0.0, -0.45, 0.0), FREEZE_COLOR);
+        }
+        if (l.count() > 1 || saved) {
+            label(tag.trim() + (l.count() > 1 ? (saved ? " " : "") + "×" + l.count() : ""), start.add(0.0, 0.3, 0.0), color);
+        }
+        Vec3 end = at(l.xyz(), n - 1, up);
+        if (cont == null) {
+            label(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
+            return;
+        }
+        // the run stopped here at the tick limit; the rest is the continuation
+        Gizmos.point(end, color, END_DOT_SIZE);
+        label(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
+        int m = cont.points();
+        if (m > 0) {
+            double[] xyz = new double[m * 3 + 3];
+            xyz[0] = l.xyz()[3 * n - 3];
+            xyz[1] = l.xyz()[3 * n - 2];
+            xyz[2] = l.xyz()[3 * n - 1];
+            System.arraycopy(cont.xyz(), 0, xyz, 3, m * 3);
+            long[] all = new long[m + 1];
+            all[0] = l.end().tick();
+            System.arraycopy(cont.ticks(), 0, all, 1, m);
+            int light = saved ? color : lighter(color);
+            segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true, m + 1, k -> false);
+            Vec3 last = at(xyz, m, up);
+            String why = cont.done() ? cont.endReason() + " t+" + all[m] : "continuing... t+" + all[m];
+            label(tag + "continued: " + why, last.add(0.0, 0.3, 0.0), light);
+        }
     }
 
     /**
