@@ -61,6 +61,11 @@ public final class PathRenderer {
         return 0xFF000000 | r << 16 | g << 8 | b;
     }
 
+    /** Colour of the dot and the label where the entity froze in the run itself (a lazy or unloaded chunk). */
+    static final int STASIS_COLOR = 0xFF9FE4FF;
+    /** Length of a dash (and of the gap after it) of a move while frozen, in blocks. */
+    private static final double DASH = 0.25;
+
     /** Colour of the dot and the label where the real world freezes a path. */
     static final int FREEZE_COLOR = 0xFFFFB030;
 
@@ -117,7 +122,15 @@ public final class PathRenderer {
             Tails.Job job = Tails.job(s, i);
             boolean continued = job != null && job.points() > 0;
             int freezeAt = l.freeze() == null ? n : l.freeze().point();
-            segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued, freezeAt);
+            segments(l.xyz(), n, l.ticks(), up, color, interval, offset, budget, true, !continued, freezeAt, l::movedWhileFrozen);
+            // frozen in the run itself (session "frozen entities"): a dot where it stopped ticking, labelled with the frozen ticks
+            for (PathSnapshot.Stasis st : l.stasis()) {
+                Vec3 sp = at(l.xyz(), st.point(), up);
+                Gizmos.point(sp, STASIS_COLOR, END_DOT_SIZE);
+                if (st.resumed() || st.resume() >= 0) {
+                    label("frozen " + st.frozenTicks() + " ticks (" + st.kind() + ")", sp.add(0.0, -0.45, 0.0), STASIS_COLOR);
+                }
+            }
             Vec3 start = at(l.xyz(), 0, up);
             // where the real world freezes it: from there the path is what the ghost predicts for a ticking chunk
             double endLift = 0.3;
@@ -149,7 +162,7 @@ public final class PathRenderer {
                     all[0] = l.end().tick();
                     System.arraycopy(ticks, 0, all, 1, m);
                     int light = lighter(color);
-                    segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true, m + 1);
+                    segments(xyz, m + 1, all, up, light, interval, offset, budget, false, true, m + 1, k -> false);
                     Vec3 last = at(xyz, m, up);
                     String why = job.done() ? job.endReason() + " t+" + all[m] : "continuing... t+" + all[m];
                     label("continued: " + why, last.add(0.0, 0.3, 0.0), light);
@@ -178,7 +191,8 @@ public final class PathRenderer {
      * {@code startDot}) and the last (when {@code endDot}) always get one. From point {@code freezeAt} on (the real world freezes the
      * entity there, a rerun's prediction over chunks that do not tick) the line is dashed (two segments on, two off) and faded.
      */
-    private static void segments(double[] xyz, int n, long[] ticks, double up, int color, int interval, int offset, int[] budget, boolean startDot, boolean endDot, int freezeAt) {
+    private static void segments(double[] xyz, int n, long[] ticks, double up, int color, int interval, int offset, int[] budget, boolean startDot, boolean endDot, int freezeAt,
+                                 java.util.function.IntPredicate movedWhileFrozen) {
         Vec3 prev = at(xyz, 0, up);
         if (startDot) {
             Gizmos.point(prev, color, END_DOT_SIZE);
@@ -188,7 +202,9 @@ public final class PathRenderer {
             boolean beyond = i >= freezeAt;
             int c = beyond ? faded(color) : color;
             if (cur.distanceToSqr(prev) > 1.0E-8) {
-                if (!beyond || ((i - freezeAt) / 2) % 2 == 0) {
+                if (movedWhileFrozen.test(i)) {
+                    dashed(prev, cur, STASIS_COLOR, budget); // moved while frozen (a piston push): not a flight
+                } else if (!beyond || ((i - freezeAt) / 2) % 2 == 0) {
                     Gizmos.line(prev, cur, c, LINE_WIDTH);
                     budget[0]--;
                 }
@@ -200,6 +216,18 @@ public final class PathRenderer {
             } else if (dotAt(ticks[i], interval, offset)) {
                 Gizmos.point(cur, c, DOT_SIZE);
             }
+        }
+    }
+
+    /** A dashed straight line from {@code a} to {@code b}: dashes of {@link #DASH} blocks with gaps of the same length (at least one dash). */
+    private static void dashed(Vec3 a, Vec3 b, int color, int[] budget) {
+        double len = a.distanceTo(b);
+        int pieces = Math.max(1, (int) Math.floor(len / (2 * DASH)));
+        Vec3 step = b.subtract(a).scale(1.0 / (pieces * 2.0));
+        for (int k = 0; k < pieces && budget[0] > 0; k++) {
+            Vec3 from = a.add(step.scale(2.0 * k));
+            Gizmos.line(from, from.add(step), color, LINE_WIDTH);
+            budget[0]--;
         }
     }
 }

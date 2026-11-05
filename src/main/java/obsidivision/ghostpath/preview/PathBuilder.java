@@ -37,7 +37,8 @@ import org.jspecify.annotations.Nullable;
 public final class PathBuilder {
     public static final int SETTLE_TICKS = 8;
     public static final double STILL_EPSILON = 1.0E-6;
-    public static final List<String> REASONS = List.of("exploded", "hit block", "hit entity", "stuck", "landed", "settled", "left dimension", "unloaded", "portal", "limit", "removed");
+    public static final List<String> REASONS = List.of("exploded", "hit block", "hit entity", "stuck", "landed", "settled", "left dimension", "unloaded", "portal", "limit", "removed",
+        "frozen: lazy chunk", "frozen: unloaded");
 
     private PathBuilder() {
     }
@@ -101,7 +102,7 @@ public final class PathBuilder {
                 int[] members = Arrays.copyOf(old.members(), old.members().length + 1);
                 members[members.length - 1] = en.getKey();
                 merged.put(key, new PathSnapshot.Line(old.type(), old.kind(), old.count() + 1, old.startTick(), old.ticks(), old.xyz(), old.vel(), old.box(), old.fuse(), members,
-                    old.end(), old.tail(), old.freeze()));
+                    old.end(), old.tail(), old.freeze(), old.stasis()));
             }
         }
         return new PathSnapshot(serial, source, dimension, ticks, limitHit, List.copyOf(merged.values()));
@@ -109,13 +110,35 @@ public final class PathBuilder {
 
     private static PathSnapshot.Line line(List<FlightPoint> raw, List<FlightNote> notes, @Nullable LiveEntity live, boolean limitHit, Map<Long, String> notTicking) {
         // one point per tick: the last of the tick (an entity added and ticked in the same game tick has two)
-        List<FlightPoint> pts = new ArrayList<>();
+        List<FlightPoint> all = new ArrayList<>();
         for (FlightPoint p : raw) {
-            if (!pts.isEmpty() && pts.getLast().tick() == p.tick()) {
-                pts.set(pts.size() - 1, p);
+            if (!all.isEmpty() && all.getLast().tick() == p.tick()) {
+                all.set(all.size() - 1, p);
             } else {
-                pts.add(p);
+                all.add(p);
             }
+        }
+        // frozen ticks (session "frozen entities") are not drawn: each stretch becomes a Stasis at its freeze point; where it is at the end
+        // of the stretch becomes a point only if it was moved meanwhile (a piston push: drawn dashed)
+        List<FlightPoint> pts = new ArrayList<>();
+        List<PathSnapshot.Stasis> stasis = new ArrayList<>();
+        List<FlightPoint> run = new ArrayList<>();
+        for (FlightPoint p : all) {
+            if (p.frozen() != null) {
+                run.add(p);
+                continue;
+            }
+            if (!run.isEmpty()) {
+                stasis.add(stasis(pts, run, true, notes));
+                run.clear();
+            }
+            pts.add(p);
+        }
+        boolean endedFrozen = !run.isEmpty();
+        String frozenKind = endedFrozen ? run.getLast().frozen() : null;
+        long frozenEnd = endedFrozen ? run.getLast().tick() : -1;
+        if (endedFrozen) {
+            stasis.add(stasis(pts, run, false, notes));
         }
         FlightKind kind = pts.getFirst().kind();
         long endTick = Long.MAX_VALUE;
@@ -130,6 +153,9 @@ public final class PathBuilder {
         }
         long stuckTick = Long.MAX_VALUE;
         for (FlightNote n : notes) {
+            if (n.what().startsWith(obsidivision.ghostpath.record.CauseTracker.EXPLOSION_NOTE)) {
+                continue; // a push while frozen, not an end
+            }
             if (n.what().equals("stuck")) {
                 stuckTick = Math.min(stuckTick, n.tick());
                 continue;
@@ -160,6 +186,11 @@ public final class PathBuilder {
                 }
             }
         }
+        if (reason == null && endedFrozen) {
+            // the run ended while it was frozen (a frozen entity never holds a run open): the path stops where it stopped ticking
+            endTick = frozenEnd;
+            reason = "frozen: " + frozenKind;
+        }
         if (reason == null) {
             FlightPoint last = pts.getLast();
             if (last.removed()) {
@@ -170,7 +201,7 @@ public final class PathBuilder {
                 reason = limitHit ? "limit" : "settled";
             }
         }
-        // cut after the end tick
+        // cut after the end tick (a frozen end: everything drawn, the end is the last drawn point; the end tick is the run's last)
         List<FlightPoint> cut = new ArrayList<>();
         for (FlightPoint p : pts) {
             if (p.tick() <= endTick) {
@@ -204,7 +235,14 @@ public final class PathBuilder {
             fuse[i] = p.fuse();
         }
         FlightPoint last = cut.getLast();
-        PathSnapshot.End end = new PathSnapshot.End(reason, last.tick(), last.x(), last.y(), last.z());
+        PathSnapshot.End end = new PathSnapshot.End(reason, endedFrozen && reason.startsWith("frozen") ? frozenEnd : last.tick(), last.x(), last.y(), last.z());
+        int drawn = cut.size();
+        List<PathSnapshot.Stasis> kept = new ArrayList<>();
+        for (PathSnapshot.Stasis st : stasis) {
+            if (st.point() < drawn && st.fromTick() <= endTick) {
+                kept.add(st.resume() < drawn ? st : new PathSnapshot.Stasis(st.point(), -1, st.fromTick(), st.toTick(), st.kind(), st.resumed(), st.ticks(), st.vel(), st.pushes()));
+            }
+        }
         PathSnapshot.Tail tail = reason.equals("limit") && kind == FlightKind.PROJECTILE && live != null
             ? new PathSnapshot.Tail(live.type(), live.nbt().copy(), live.tickCount(), live.xo(), live.yo(), live.zo(), live.onGround()) : null;
         // the first point in a chunk whose entities do not tick in the real world (rerun only: the map is empty for a real recording)
@@ -212,6 +250,9 @@ public final class PathBuilder {
         if (!notTicking.isEmpty()) {
             for (int i = 0; i < cut.size(); i++) {
                 FlightPoint p = cut.get(i);
+                if (p.frozen() != null || isStasisPoint(kept, i)) {
+                    continue; // the ghost froze it here too (same levels as the real world): not a prediction beyond the real one
+                }
                 String why = notTicking.get(net.minecraft.world.level.ChunkPos.pack(net.minecraft.util.Mth.floor(p.x()) >> 4, net.minecraft.util.Mth.floor(p.z()) >> 4));
                 if (why != null) {
                     freeze = new PathSnapshot.Freeze(i, p.tick(), why, p.x(), p.y(), p.z());
@@ -219,7 +260,46 @@ public final class PathBuilder {
                 }
             }
         }
-        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, vel, box, fuse, new int[] {cut.getFirst().index()}, end, tail, freeze);
+        return new PathSnapshot.Line(cut.getFirst().type(), kind, 1, cut.getFirst().tick(), ticks, xyz, vel, box, fuse, new int[] {cut.getFirst().index()}, end, tail, freeze,
+            List.copyOf(kept));
+    }
+
+    /**
+     * One frozen stretch {@code run} after the drawn points {@code pts} (which it extends): the freeze point is the last drawn point, or the
+     * stretch's first point when nothing was drawn yet (an entity tagged while already frozen); if the entity is somewhere else at the end
+     * of the stretch, that position becomes a drawn point (the resume point, dashed line). The explosion notes inside the stretch are its
+     * pushes.
+     */
+    private static PathSnapshot.Stasis stasis(List<FlightPoint> pts, List<FlightPoint> run, boolean resumed, List<FlightNote> notes) {
+        if (pts.isEmpty()) {
+            pts.add(run.getFirst());
+        }
+        int point = pts.size() - 1;
+        FlightPoint at = pts.get(point);
+        FlightPoint lastFrozen = run.getLast();
+        int resume = -1;
+        if (lastFrozen.x() != at.x() || lastFrozen.y() != at.y() || lastFrozen.z() != at.z()) {
+            pts.add(lastFrozen);
+            resume = pts.size() - 1;
+        }
+        long[] ticks = new long[run.size()];
+        double[] vel = new double[run.size() * 3];
+        for (int i = 0; i < run.size(); i++) {
+            FlightPoint p = run.get(i);
+            ticks[i] = p.tick();
+            vel[3 * i] = p.vx();
+            vel[3 * i + 1] = p.vy();
+            vel[3 * i + 2] = p.vz();
+        }
+        long from = run.getFirst().tick();
+        long to = lastFrozen.tick();
+        List<String> pushes = new ArrayList<>();
+        for (FlightNote n : notes) {
+            if (n.what().startsWith(obsidivision.ghostpath.record.CauseTracker.EXPLOSION_NOTE) && n.tick() >= from && n.tick() <= to) {
+                pushes.add(n.what() + " t+" + n.tick());
+            }
+        }
+        return new PathSnapshot.Stasis(point, resume, from, to, run.getFirst().frozen(), resumed, ticks, vel, List.copyOf(pushes));
     }
 
     private static String removal(FlightKind kind, String what) {
@@ -233,6 +313,23 @@ public final class PathBuilder {
             return "landed";
         }
         return "removed";
+    }
+
+    private static boolean isStasisPoint(List<PathSnapshot.Stasis> stasis, int i) {
+        for (PathSnapshot.Stasis st : stasis) {
+            if (st.point() == i || st.resume() == i) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String stasisText(PathSnapshot.Line l) {
+        StringBuilder sb = new StringBuilder();
+        for (PathSnapshot.Stasis st : l.stasis()) {
+            sb.append(st.signature()).append(';');
+        }
+        return sb.toString();
     }
 
     /** What makes two paths "identical": same type, start tick, end, and every position of every tick. */
@@ -255,7 +352,7 @@ public final class PathBuilder {
             PathSnapshot.Line b = k.line;
             return a.type().equals(b.type()) && a.startTick() == b.startTick() && a.end().reason().equals(b.end().reason()) && a.end().tick() == b.end().tick()
                 && Arrays.equals(a.ticks(), b.ticks()) && Arrays.equals(a.xyz(), b.xyz()) && (a.tail() != null) == (b.tail() != null)
-                && java.util.Objects.equals(a.freeze(), b.freeze());
+                && java.util.Objects.equals(a.freeze(), b.freeze()) && stasisText(a).equals(stasisText(b));
         }
 
         @Override

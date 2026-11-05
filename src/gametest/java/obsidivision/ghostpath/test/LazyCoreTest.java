@@ -123,7 +123,13 @@ public class LazyCoreTest {
                         helper.assertTrue(!pearl.isEmpty(), "no snowball in the recording: " + rec.flightPoints().stream().map(CauseTracker.FlightPoint::type).distinct().toList() + "; " + rec.summary());
                         CauseTracker.FlightPoint last = pearl.getLast();
                         helper.assertTrue((Math.floor(last.x()) >= b.getMinBlockX()) && Math.floor(last.x()) <= b.getMaxBlockX(), "the snowball did not end in B: last point x " + last.x() + ", B x " + b.getMinBlockX());
-                        helper.assertTrue(last.tick() < rec.ticks() - 5, "the snowball was ticked to the end (not frozen in B): last point t+" + last.tick() + " of " + rec.ticks());
+                        // session "frozen entities": a frozen entity never holds a run open, so the recording ends soon after it froze
+                        // (before: it ran to the limit), with the end reason "frozen: lazy chunk"
+                        helper.assertTrue("lazy chunk".equals(last.frozen()) && !rec.limitHit() && rec.ticks() < limit - 5,
+                            "the frozen snowball held the recording open: last point t+" + last.tick() + " frozen " + last.frozen() + " of " + rec.ticks() + " ticks, limit hit " + rec.limitHit());
+                        obsidivision.ghostpath.preview.PathSnapshot.Line line = obsidivision.ghostpath.preview.PathBuilder.of(1, rec).lines().stream()
+                            .filter(l -> l.type().equals("minecraft:snowball")).findFirst().orElseThrow();
+                        helper.assertTrue(line.end().reason().equals("frozen: lazy chunk"), "snowball end: " + line.end());
                         GhostCheck.Result r = GhostCheck.run(level, rec);
                         LOG.info("[ghostpath] lazy core check: snowball last point t+{} at x {} (B from {}), recording {} ticks:\n{}", last.tick(), last.x(), b.getMinBlockX(), rec.ticks(), String.join("\n", r.lines()));
                         helper.assertTrue(r.ran(), "ghost check did not run: " + r.note());

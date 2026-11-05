@@ -110,17 +110,30 @@ public final class UndoLog {
      * minecarts, VehicleEntity damage / hurt time / hurt direction (synced data, VehicleEntity.java:94-107; damage over
      * 40 breaks it, :50).
      */
-    private record EntitySnapshot(CompoundTag tag, long chunk, int invulnerableTime, float lastHurt, float vehicleDamage, int vehicleHurtTime, int vehicleHurtDir) {
+    private record EntitySnapshot(CompoundTag tag, long chunk, int invulnerableTime, float lastHurt, float vehicleDamage, int vehicleHurtTime, int vehicleHurtDir,
+                                  double[] old) {
         static EntitySnapshot of(CompoundTag tag, Entity e) {
             float lastHurt = e instanceof LivingEntity living ? ((LivingEntityAccessor) living).ghostpath$lastHurt() : 0.0F;
             long chunk = e.chunkPosition().pack();
+            // the previous positions and rotations (Entity.java xo/yo/zo, xOld/yOld/zOld, xRotO/yRotO): not in NBT, and load() sets them to
+            // the position (absSnapTo). An entity that ticks overwrites them at its next tick start; a frozen one (a pearl in a lazy chunk)
+            // does not, so without them the restored entity is not the one recorded and the ghost check differs (session "frozen entities")
+            double[] old = {e.xo, e.yo, e.zo, e.xOld, e.yOld, e.zOld, e.xRotO, e.yRotO};
             if (e instanceof VehicleEntity v) {
-                return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, v.getDamage(), v.getHurtTime(), v.getHurtDir());
+                return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, v.getDamage(), v.getHurtTime(), v.getHurtDir(), old);
             }
-            return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, 0.0F, 0, 0);
+            return new EntitySnapshot(tag, chunk, e.invulnerableTime, lastHurt, 0.0F, 0, 0, old);
         }
 
         void applyTransient(Entity e) {
+            e.xo = this.old[0];
+            e.yo = this.old[1];
+            e.zo = this.old[2];
+            e.xOld = this.old[3];
+            e.yOld = this.old[4];
+            e.zOld = this.old[5];
+            e.xRotO = (float) this.old[6];
+            e.yRotO = (float) this.old[7];
             e.invulnerableTime = this.invulnerableTime;
             if (e instanceof LivingEntity living) {
                 ((LivingEntityAccessor) living).ghostpath$setLastHurt(this.lastHurt);

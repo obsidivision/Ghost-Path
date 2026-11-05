@@ -182,4 +182,13 @@ public abstract class ServerLevelMixin {
             tracker.onChainEntityTicked(entity);
         }
     }
+
+    /** 26.2 ServerLevel.java:355 {@code public void tick(BooleanSupplier)}, at its end: frozen chain entities get their point of this tick. */
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void ghostpath$levelTickEnd(java.util.function.BooleanSupplier haveTime, org.spongepowered.asm.mixin.injection.callback.CallbackInfo ci) {
+        CauseTracker tracker = CauseTracker.active();
+        if (tracker != null) {
+            tracker.onLevelTickEnd((net.minecraft.world.level.Level) (Object) this);
+        }
+    }
 }

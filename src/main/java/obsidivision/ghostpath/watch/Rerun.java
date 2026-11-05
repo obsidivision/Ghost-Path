@@ -54,6 +54,7 @@ final class Rerun {
     private boolean copying;
     private long createNanos;
     private @Nullable String triggerNote;
+    private List<String> loadingChanged = List.of();
     private java.util.Map<Long, String> notTicking = java.util.Map.of();
     private boolean running;
     private long maxSliceNanos;
@@ -123,6 +124,8 @@ final class Rerun {
                 this.notTicking = java.util.Map.copyOf(this.prepared.realNotTicking());
                 Recording rec = this.watch.recording();
                 this.triggerNote = this.prepareTrigger(rec);
+                // the copy takes the real levels as they are now: say so if they are not the recording's (session "frozen entities")
+                this.loadingChanged = List.copyOf(rec.loadingAtStart().changed(this.real, this.min, this.max, 3));
                 CauseTracker t = CauseTracker.begin(this.ghost, rec.seed(), rec.kickApplied());
                 this.tracker = t;
                 try {
@@ -213,7 +216,7 @@ final class Rerun {
             Prediction.tntSpawnTicks(t.events(), t.entityTrace()), List.copyOf(t.events()), List.copyOf(t.entityTrace()), fp, t.pending(),
             this.min, this.max, this.widened, List.copyOf(beyond), gaps, this.serverTicks, this.workNanos / 1_000_000L,
             this.copyNanos / 1_000_000L, this.maxSliceNanos / 1_000_000L, this.createNanos / 1_000_000L, this.triggerNote,
-            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles(), this.notTicking, this.copyTicks, t.notSimulated());
+            List.copyOf(t.flightPoints()), List.copyOf(t.flightNotes()), t.captureLiveProjectiles(), this.notTicking, this.copyTicks, t.notSimulated(), this.loadingChanged);
         this.finished = true;
         this.discard();
     }

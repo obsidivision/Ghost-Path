@@ -84,6 +84,7 @@ public final class MachineRecorder {
         long startTime = level.getGameTime();
         Weather weather = Weather.of(level);
         net.minecraft.world.clock.PackedClockStates clocks = level.clockManager().packState();
+        LoadingLevels loading = LoadingLevels.capture(level, pos.getX() >> 4, pos.getZ() >> 4);
         obsidivision.ghostpath.watch.LiveWatch.preempt(); // a live rerun's ghost holds the autosave guard (one ghost at a time)
         SaveGuard saves = SaveGuard.begin(level.getServer());
         UndoLog undo;
@@ -100,7 +101,7 @@ public final class MachineRecorder {
             saves.end(false);
             throw e;
         }
-        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather, clocks, state);
+        MachineRecorder recorder = new MachineRecorder(level, trigger, limit, kick, listener, undo, tracker, startTime, saves, weather, clocks, state, loading);
         current = recorder;
         try {
             tracker.enableEntityTrace();
@@ -148,6 +149,7 @@ public final class MachineRecorder {
     /** The trigger's state before the press (a rerun sets it back before pressing, ruling 1 after step 4). */
     private final BlockState triggerState;
     private final net.minecraft.world.clock.PackedClockStates clocksAtStart;
+    private final LoadingLevels loading;
     private int serverTicks;
     // set when the recording part is over and the restore waits for chunks
     private boolean restoring;
@@ -164,7 +166,8 @@ public final class MachineRecorder {
 
     private MachineRecorder(ServerLevel level, BlockPos trigger, int limit, boolean kick, Listener listener, UndoLog undo,
                             CauseTracker tracker, long startTime, SaveGuard saves, Weather weatherAtStart,
-                            net.minecraft.world.clock.PackedClockStates clocksAtStart, BlockState triggerState) {
+                            net.minecraft.world.clock.PackedClockStates clocksAtStart, BlockState triggerState, LoadingLevels loading) {
+        this.loading = loading;
         this.triggerState = triggerState;
         this.saves = saves;
         this.clocksAtStart = clocksAtStart;
@@ -240,7 +243,7 @@ public final class MachineRecorder {
         try {
             this.undo.restore(this.scope);
             recording = Recording.of(this.tracker, this.undo, this.trigger, this.endTicks, this.limit, this.endLimitHit, this.endPending, this.kick,
-                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size(), this.clocksAtStart, this.triggerState, this.liveProjectiles);
+                SEED, this.startTime, this.weatherAtStart, this.weatherAtEnd, this.restoreChunks.size(), this.clocksAtStart, this.triggerState, this.liveProjectiles, this.loading);
         } catch (RuntimeException e) {
             current = null;
             this.removeRestoreTickets();

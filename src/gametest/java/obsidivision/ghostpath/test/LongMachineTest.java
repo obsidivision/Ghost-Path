@@ -89,7 +89,8 @@ public class LongMachineTest {
         // the summary says it (a recording made from such a tracker)
         Recording any = new Recording(level.dimension(), at, SEED, true, 0L, 1, 10, false, new CauseTracker.Pending(0, 0, 0, 0), List.of(), java.util.Set.of(), java.util.Map.of(), java.util.Set.of(), java.util.Set.of(),
             0, 0, 0, 0, java.util.Set.of(), 0, obsidivision.ghostpath.record.Weather.of(level), obsidivision.ghostpath.record.Weather.of(level), 0, 0, 0, 0, 0, 0, List.of(),
-            level.clockManager().packState(), List.of(), java.util.Map.of(), level.getBlockState(at), List.of(), List.of(), List.of(), tracker.notSimulated());
+            level.clockManager().packState(), List.of(), java.util.Map.of(), level.getBlockState(at), List.of(), List.of(), List.of(), tracker.notSimulated(),
+            obsidivision.ghostpath.record.LoadingLevels.capture(level, at.getX() >> 4, at.getZ() >> 4), 0);
         helper.assertTrue(any.summary().contains("Not simulated: player-owned pearl: chunk loading not simulated"), "summary: " + any.summary());
         helper.succeed();
     }

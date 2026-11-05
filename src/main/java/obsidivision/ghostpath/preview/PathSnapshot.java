@@ -39,7 +39,32 @@ public record PathSnapshot(long serial, String source, String dimension, int tic
      * an index is the entity's place in the order the chain created entities, the same in a rerun, so a pin finds it again.
      */
     public record Line(String type, FlightKind kind, int count, long startTick, long[] ticks, double[] xyz, double[] vel, double[] box, int[] fuse, int[] members,
-                       End end, @Nullable Tail tail, @Nullable Freeze freeze) {
+                       End end, @Nullable Tail tail, @Nullable Freeze freeze, List<Stasis> stasis) {
+        public Line(String type, FlightKind kind, int count, long startTick, long[] ticks, double[] xyz, double[] vel, double[] box, int[] fuse, int[] members,
+                    End end, @Nullable Tail tail, @Nullable Freeze freeze) {
+            this(type, kind, count, startTick, ticks, xyz, vel, box, fuse, members, end, tail, freeze, List.of());
+        }
+
+        /** The stretch frozen right after point {@code i} (its freeze point), or null. */
+        public @Nullable Stasis stasisAt(int i) {
+            for (Stasis st : this.stasis) {
+                if (st.point() == i) {
+                    return st;
+                }
+            }
+            return null;
+        }
+
+        /** Whether the segment from point {@code i - 1} to point {@code i} is a move while frozen (a piston push): drawn dashed. */
+        public boolean movedWhileFrozen(int i) {
+            for (Stasis st : this.stasis) {
+                if (st.resume() == i && st.point() == i - 1) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         public int points() {
             return this.ticks.length;
         }
@@ -70,6 +95,32 @@ public record PathSnapshot(long serial, String source, String dimension, int tic
             return l.end().reason() + " t+" + l.end().tick();
         }
         return "real: frozen at t+" + f.tick() + "; ghost: " + l.end().reason() + " at t+" + l.end().tick();
+    }
+
+    /**
+     * A stretch of ticks in which the entity did not tick in the run itself (its chunk does not tick entities: a lazy chunk, or not loaded),
+     * session "frozen entities". Nothing is drawn for those ticks.
+     *
+     * @param point     index of the freeze point: the last point before the frozen ticks (where it stopped), or, for an entity frozen from
+     *                  its first point on, that point
+     * @param resume    index of the point where it is at the end of the stretch, if it was moved while frozen (a piston push; drawn as a
+     *                  dashed line from {@code point}), else -1 (the path goes on from the freeze point)
+     * @param fromTick  first frozen tick, {@code toTick} the last
+     * @param kind      "lazy chunk" or "unloaded"
+     * @param resumed   it ticked again after the stretch (else the run ended with it frozen)
+     * @param ticks     every frozen tick; {@code vel[3i..3i+2]} its velocity at the end of that tick (explosions add to it: lazy acceleration)
+     * @param pushes    chain explosions that pushed it while frozen: "explosion #k t+N", in order
+     */
+    public record Stasis(int point, int resume, long fromTick, long toTick, String kind, boolean resumed, long[] ticks, double[] vel, List<String> pushes) {
+        public int frozenTicks() {
+            return this.ticks.length;
+        }
+
+        /** A text that is equal for equal stretches (the arrays compare by content), for merging identical paths. */
+        public String signature() {
+            return this.point + "/" + this.resume + "/" + this.fromTick + "/" + this.toTick + "/" + this.kind + "/" + this.resumed + "/" + java.util.Arrays.toString(this.ticks)
+                + "/" + java.util.Arrays.toString(this.vel) + "/" + this.pushes;
+        }
     }
 
     /** How a path ends: one of {@link PathBuilder#REASONS}, the tick, and where. */
