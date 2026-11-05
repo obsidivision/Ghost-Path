@@ -843,6 +843,33 @@ Code: `LootContextBuilderMixin` (`@ModifyExpressionValue` on the `orElseGet` of 
 
 ---
 
+## Lazy chunks: what still happens to a frozen entity  [verified 26.2, read in the source; session "frozen entities and clocks", item 1]
+"Lazy" here = loaded, entities not ticking. Two conditions decide whether an entity ticks (`ServerLevel.tick`, :420-447): it must be in `entityTickList`, which holds the entities of entity sections whose visibility is `TICKING` (`PersistentEntitySectionManager.updateChunkStatus` :138-166 calls `startTicking`/`stopTicking`, which end in `ServerLevel.EntityCallbacks.onTickingStart/End` :1909-1914; `Visibility.fromFullChunkStatus` :26-32: `ENTITY_TICKING` -> `TICKING`, `FULL`/`BLOCK_TICKING` -> `TRACKED`, below -> `HIDDEN`), **and** its chunk must be in the simulation tracker's entity ticking range (`inEntityTickingRange`, `DistanceManager.java:135-137`, checked per entity per tick at `ServerLevel.java:434`; players skip that check). The helper `ServerLevel.isPositionEntityTicking` (:1800-1802) is exactly these two. Levels (`ChunkLevel.java:57-63`): entity ticking at 31 or less, block ticking at 32 or less, FULL at 33.
+
+**1. Explosions and entities in lazy chunks: pushed, hurt, never moved.** `ServerExplosion.hurtEntities` (:171-209) collects with `level.getEntities(source, box)` (:181), which goes to `EntitySectionStorage.forEachAccessibleNonEmptySection` (:37-60) and keeps every section whose status `isAccessible()` (:56), i.e. `TRACKED` and `TICKING`. So an entity in a lazy chunk **is found**. For each one not ignoring the explosion (:182): `hurtServer` if the calculator says so (:190-191), then `entity.push(knockback)` (:199), which is `setDeltaMovement(getDeltaMovement().add(...))` (`Entity.java:1908-1912`): **the velocity changes, the position does not**. Nothing in that loop or in `push` looks at ticking. This is lazy acceleration: every explosion adds to the stored velocity of a frozen entity, which only moves when it ticks again. Per kind:
+- **Primed TNT**: pushed; `PrimedTnt.hurtServer` returns false (:207-209); its fuse counts down only in `tick()` (:109-110), so a frozen TNT keeps its fuse. It is not primed (it already is).
+- **Projectiles** (pearls, snowballs, arrows): pushed (no `ignoreExplosion` override); a projectile in `REDIRECTABLE_PROJECTILE` gets the explosion's entity as owner (:200-201).
+- **Items**: `ItemEntity.ignoreExplosion` (:302-304) lets block-like explosions (TNT) through; they are hurt and destroyed by it (`hurtServer` :277-), frozen or not.
+- **Vehicles**: pushed and hurt (`VehicleEntity.hurtServer` :40-58; ignored only for a mob's explosion without mob griefing, :66-68). **TNT minecart: primed by the explosion** even when frozen: an explosion damage source destroys it (`shouldSourceDestroy` -> `damageSourceIgnitesTnt`, `MinecartTNT.java:208-217`) and `destroy` primes the fuse with the cart's **own random** (`MinecartTNT.java:77-86`, `random.nextInt(20) + random.nextInt(20)`); the fuse counts down only in its `tick()` (:51-56).
+- **Mobs**: hurt and pushed (knockback resistance applies, :194-197); may die there.
+- **TNT blocks** in a lazy chunk: the block part of the explosion (`interactWithBlocks` -> `BlockState.onExplosionHit` -> `Block.wasExploded`, `BlockBehaviour.java:198`, `TntBlock.wasExploded` :75) has no ticking check either: the block is lit and the new primed TNT is added there, frozen if the chunk is lazy.
+
+**2. Pistons and block entities in lazy chunks: only at level 32.**
+- Block entities (moving pistons included) tick in `Level.tickBlockEntities` only if `shouldTickBlocksAt(pos)` (`Level.java:550`; `ServerLevel.java:471-473` = `inBlockTickingRange`, simulation level 32 or less) and the ticker's own `LevelChunk.isTicking` (:411-418: full status at least `BLOCK_TICKING` and entities loaded, checked in `BoundTickingBlockEntity.tick` :742).
+- Block events (the piston's start) run only if `shouldTickBlocksAt` (`ServerLevel.java:1256`); otherwise they are kept and retried every tick (`blockEventsToReschedule`, :1251-1273).
+- Scheduled ticks: `LevelTicks` with `isPositionTickingWithEntitiesLoaded` (`ServerLevel.java:211-212, 1796-1798` -> `ServerChunkCache.isPositionTicking` :294-301).
+- So in a **level 32** chunk (next to an entity-ticking one: block ticking, entities frozen) pistons extend, moving pistons move and repeaters run. In a **level 33** chunk nothing of that runs.
+- **A piston can push a frozen entity**: `PistonMovingBlockEntity.moveCollidedEntities` (:120-161) also uses `level.getEntities` (:126, accessible sections) and moves each with `entity.move(MoverType.PISTON, ...)` (:192-196; `Entity.move` :720-729 applies the piston limits) or, for a slime/honey bounce, `setDeltaMovement` (:161); sticky moves the same way (`moveStuckEntities` :201-209). None of it checks whether the entity ticks.
+
+**3. What makes a frozen entity tick again.**
+- **Its chunk becomes entity ticking**: a ticket that brings the loading level to 31 or less (player nearby, forced chunk, a player-owned ender pearl's ticket, a portal ticket, ...) moves the section to `TICKING` (`updateChunkStatus` :163-165 `startTicking`), and the simulation level must be 31 or less too (:434). Both levels come from tickets, so in practice "a ticket arrives".
+- **It is moved into an entity-ticking chunk**: any position change goes `Entity.setPosRaw` (:3794) -> `levelCallback.onMove()` (:3808) -> `PersistentEntitySectionManager.Callback.onMove` (:367-383), which re-files the entity by its new section and calls `updateStatus` (:386-407): `startTicking` when the new section ticks. Movers that work on a frozen entity: a piston (above), a teleport (command, end gateway), a vehicle that ticks moving its passenger. Explosions do **not** (velocity only).
+- **Riding a ticking vehicle**: passengers are ticked from the vehicle's tick (`tickPassenger`, `ServerLevel.java:836`), whatever their own section.
+- Players are always ticking (`Player.isAlwaysTicking`, :1910); nothing else is.
+- Exceptions: the whole entity section of the level is skipped while `emptyTime >= 300` (:420); an entity in `entityTickList` but outside simulation range still gets `checkDespawn` every tick (:430-433) but no tick.
+
+---
+
 ## Rulings (user decisions)
 
 **R1. Explosion randomness: seed it.**
