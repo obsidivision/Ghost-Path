@@ -5,7 +5,7 @@ Ghost Path shows where your TNT and projectiles will go before they do. It runs 
 ## 1. Install
 
 1. Minecraft Java **26.2** with **Fabric Loader 0.20.1**.
-2. Put `ghostpath-0.1.0.jar` and **Fabric API 0.161.0+26.2** in the `mods` folder.
+2. Put `ghostpath-0.19.5.jar` and **Fabric API 0.161.0+26.2** in the `mods` folder.
 3. Start a **singleplayer** world with cheats on (the commands need operator rights; the owner of a singleplayer world has them). It is not meant for servers.
 
 ## 2. Your first preview
