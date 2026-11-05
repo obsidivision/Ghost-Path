@@ -49,6 +49,44 @@ public final class PanelText {
         return out;
     }
 
+    /** How close (blocks) another path's point at the same tick must be to count as "here" ({@link #here}). */
+    public static final double HERE = 0.05;
+
+    /**
+     * How many entities (counting merged identical paths) of the same type are within {@link #HERE} blocks of {@code line}'s point {@code point},
+     * at the same tick, this one included. Paths are only merged when every tick is equal, so a batch of TNT that meets at one place from
+     * different directions is many lines; this tells the panel they are on top of each other.
+     */
+    public static int here(PathSnapshot s, PathSnapshot.Line line, int point) {
+        long tick = line.ticks()[point];
+        double x = line.xyz()[3 * point];
+        double y = line.xyz()[3 * point + 1];
+        double z = line.xyz()[3 * point + 2];
+        int n = 0;
+        for (PathSnapshot.Line o : s.lines()) {
+            if (!o.type().equals(line.type())) {
+                continue;
+            }
+            int i = java.util.Arrays.binarySearch(o.ticks(), tick);
+            if (i >= 0 && Math.abs(o.xyz()[3 * i] - x) <= HERE && Math.abs(o.xyz()[3 * i + 1] - y) <= HERE && Math.abs(o.xyz()[3 * i + 2] - z) <= HERE) {
+                n += o.count();
+            }
+        }
+        return n;
+    }
+
+    /** {@link #ghost} plus the "N entities here" line when other paths are on top of this one (instead of "single"). */
+    public static List<String> ghost(PathSnapshot s, PathSnapshot.Line line, int point, int member, String source) {
+        List<String> out = ghost(line, point, member, source);
+        int here = here(s, line, point);
+        if (here > line.count() && out.getLast().equals("single")) {
+            out.set(out.size() - 1, here + " entities within " + HERE + " here, on separate paths");
+        } else if (here > line.count()) {
+            out.add(here + " entities within " + HERE + " here in all");
+        }
+        return out;
+    }
+
     /** Most velocity rows listed for one frozen stretch (equal velocities on consecutive ticks share a row). */
     public static final int MAX_FROZEN_ROWS = 12;
 

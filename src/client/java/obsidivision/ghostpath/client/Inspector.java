@@ -472,7 +472,7 @@ public final class Inspector {
             return lines;
         }
         if (h != null) {
-            return PanelText.ghost(h.path(), h.point(), memberCursor, h.snapshot().source());
+            return PanelText.ghost(h.snapshot(), h.path(), h.point(), memberCursor, h.snapshot().source());
         }
         TailHover t = hoverTail;
         if (t != null) {

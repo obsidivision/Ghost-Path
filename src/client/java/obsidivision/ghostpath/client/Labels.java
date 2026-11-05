@@ -19,7 +19,7 @@ import org.joml.Vector3fc;
  * Collected during the level pass ({@link PathRenderer}, {@link #add}), drawn by {@link #hud}. Client thread only.
  */
 final class Labels {
-    private record Req(Vec3 pos, String text, int color, int marker) {
+    private record Req(Vec3 pos, String text, int color, int marker, int weight) {
     }
 
     private static final List<Req> REQ = new ArrayList<>();
@@ -33,12 +33,40 @@ final class Labels {
     }
 
     static void begin() {
-        lastTexts = REQ.stream().map(Req::text).toList();
+        lastTexts = merged().stream().map(Req::text).toList();
         REQ.clear();
     }
 
     static void add(String text, Vec3 pos, int color, int marker) {
-        REQ.add(new Req(pos, text, color, marker));
+        REQ.add(new Req(pos, text, color, marker, 0));
+    }
+
+    /** An end label standing for {@code weight} entities. */
+    static void add(String text, Vec3 pos, int color, int marker, int weight) {
+        REQ.add(new Req(pos, text, color, marker, weight));
+    }
+
+    /**
+     * Labels with weight and the same text within 0.15 blocks of each other become one, "exploded t+81 ×60": a batch of TNT that ends at one place
+     * has one label, not sixty on top of each other.
+     */
+    private static List<Req> merged() {
+        Map<String, Req> by = new java.util.LinkedHashMap<>();
+        List<Req> out = new ArrayList<>();
+        for (Req r : REQ) {
+            if (r.weight == 0) {
+                out.add(r);
+                continue;
+            }
+            String k = r.text + "@" + Math.round(r.pos.x * 6) + "," + Math.round(r.pos.y * 6) + "," + Math.round(r.pos.z * 6);
+            Req old = by.get(k);
+            Req now = old == null ? r : new Req(old.pos, old.text, old.color, old.marker, old.weight + r.weight);
+            by.put(k, now);
+        }
+        for (Req r : by.values()) {
+            out.add(r.weight > 1 ? new Req(r.pos, r.text + " ×" + r.weight, r.color, r.marker, r.weight) : r);
+        }
+        return out;
     }
 
     private static String key(Req r) {
@@ -57,7 +85,7 @@ final class Labels {
         List<Req> reqs = new ArrayList<>();
         List<LabelLayout.Item> items = new ArrayList<>();
         List<double[]> info = new ArrayList<>(); // distance, scale, x, y, w, h
-        for (Req r : REQ) {
+        for (Req r : merged()) {
             Vec3 d = r.pos.subtract(cam);
             double dist = d.length();
             if (dist > 0.0 && d.x * fwd.x() + d.y * fwd.y() + d.z * fwd.z() <= 0.0 || st.labelDistanceAlpha(dist) <= 0.0) {

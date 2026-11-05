@@ -48,6 +48,24 @@ public class InspectorTest {
         return Picker.pick(s, origin, dir, max, l -> 0.0);
     }
 
+    /** A batch that meets at one place from different directions is several lines: the panel says how many are on top of each other, not "single". */
+    @GameTest
+    public void aBatchMeetingAtOnePlaceIsCountedInThePanel(GameTestHelper helper) {
+        List<FlightPoint> pts = new ArrayList<>();
+        List<FlightNote> notes = new ArrayList<>();
+        tnt(pts, notes, 1, 0, 11, 0.0, 1.0, 5.0, 3.0);
+        tnt(pts, notes, 2, 0, 11, 20.0, -1.0, 5.0, 3.0);
+        tnt(pts, notes, 3, 0, 11, 10.0, 0.0, 5.0, 3.0);
+        PathSnapshot s = snapshot(pts, notes);
+        helper.assertTrue(s.lines().size() == 3, "three separate lines: " + s.lines().size());
+        PathSnapshot.Line a = s.lines().getFirst();
+        helper.assertTrue(PanelText.here(s, a, 10) == 3 && PanelText.here(s, a, 0) == 1, "here: " + PanelText.here(s, a, 10) + " / " + PanelText.here(s, a, 0));
+        List<String> end = PanelText.ghost(s, a, 10, 0, "recorded");
+        helper.assertTrue(end.stream().anyMatch(t -> t.startsWith("3 entities within")) && !end.contains("single"), "panel at the meeting point: " + end);
+        helper.assertTrue(PanelText.ghost(s, a, 0, 0, "recorded").contains("single"), "far from the others it is single");
+        helper.succeed();
+    }
+
     /** The short panel keeps what happens and rounds the numbers; nothing is invented, the full lines stay the source. */
     @GameTest
     public void theCompactPanelIsShortAndKeepsTheFacts(GameTestHelper helper) {

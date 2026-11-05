@@ -163,7 +163,7 @@ public final class PathRenderer {
             if (lab.line().count() > 1) {
                 label("×" + lab.line().count(), start.add(0.0, 0.3, 0.0), c);
             }
-            endLabel(PathSnapshot.endText(lab.line()), end.add(0.0, 0.3, 0.0), c);
+            endLabel(PathSnapshot.endText(lab.line()), end.add(0.0, 0.3, 0.0), c, lab.line().count());
         }
     }
 
@@ -212,12 +212,12 @@ public final class PathRenderer {
         }
         Vec3 end = at(l.xyz(), n - 1, up);
         if (cont == null) {
-            endLabel(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
+            endLabel(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color, l.count());
             return;
         }
         // the run stopped here at the tick limit; the rest is the continuation
         dot(end, color, Style.current().endDotSize());
-        endLabel(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color);
+        endLabel(tag + PathSnapshot.endText(l), end.add(0.0, endLift, 0.0), color, l.count());
         int m = cont.points();
         if (m > 0) {
             double[] xyz = new double[m * 3 + 3];
@@ -243,7 +243,12 @@ public final class PathRenderer {
 
     /** The end label of a path: the marker shows the end reason (exploded, hit, stuck, frozen, limit, continued). */
     static void endLabel(String text, Vec3 pos, int color) {
-        Labels.add(text, pos, color, Style.current().marker(text.substring(text.indexOf(']') + 1).trim()));
+        endLabel(text, pos, color, 1);
+    }
+
+    /** {@code weight}: how many entities the label stands for; labels with the same text at one place are drawn as one with the total ({@code Labels}). */
+    static void endLabel(String text, Vec3 pos, int color, int weight) {
+        Labels.add(text, pos, color, Style.current().marker(text.substring(text.indexOf(']') + 1).trim()), weight);
     }
 
     private static Vec3 cam = Vec3.ZERO;
