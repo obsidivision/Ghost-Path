@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import obsidivision.ghostpath.PathSettings;
 import obsidivision.ghostpath.record.CauseTracker.FlightKind;
 import obsidivision.ghostpath.record.CauseTracker.FlightNote;
 import obsidivision.ghostpath.record.CauseTracker.FlightPoint;
@@ -41,14 +42,29 @@ public final class PathBuilder {
     private PathBuilder() {
     }
 
-    /** The real run of {@code /path machine}. */
+    /** The real run of {@code /path machine}; {@code copied}: the chunk rectangle the ghost check copies (x min, z min, x max, z max), or null. */
+    public static PathSnapshot of(long serial, Recording r, int @Nullable [] copied) {
+        return build(serial, "recorded", r.dimension().identifier().toString(), r.ticks(), r.limitHit(), r.flightPoints(), r.flightNotes(), r.liveProjectiles(), Map.of())
+            .withArea(AreaBuilder.build(r.writes(), r.footprint(), PathSettings.watchMargin, copied, null, null));
+    }
+
     public static PathSnapshot of(long serial, Recording r) {
-        return build(serial, "recorded", r.dimension().identifier().toString(), r.ticks(), r.limitHit(), r.flightPoints(), r.flightNotes(), r.liveProjectiles(), Map.of());
+        return of(serial, r, null);
     }
 
     /** A ghost rerun. */
     public static PathSnapshot of(long serial, Prediction p, String dimension) {
-        return build(serial, "rerun", dimension, p.ticks(), p.limitHit(), p.flightPoints(), p.flightNotes(), p.liveProjectiles(), p.notTicking());
+        return of(serial, p, dimension, null, null);
+    }
+
+    /**
+     * A ghost rerun with the area data: {@code base} is the machine's own first rectangle (x min, z min, x max, z max) when the run was
+     * widened, {@code change} the block change that started it.
+     */
+    public static PathSnapshot of(long serial, Prediction p, String dimension, int @Nullable [] base, AreaData.@Nullable Change change) {
+        int[] copied = {p.copiedMin().x(), p.copiedMin().z(), p.copiedMax().x(), p.copiedMax().z()};
+        return build(serial, "rerun", dimension, p.ticks(), p.limitHit(), p.flightPoints(), p.flightNotes(), p.liveProjectiles(), p.notTicking())
+            .withArea(AreaBuilder.build(p.footprint().writes(), p.footprint().positions(), PathSettings.watchMargin, copied, p.widened() ? base : null, change));
     }
 
     public static PathSnapshot build(long serial, String source, String dimension, int ticks, boolean limitHit, List<FlightPoint> points,

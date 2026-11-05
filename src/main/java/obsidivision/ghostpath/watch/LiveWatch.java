@@ -419,7 +419,8 @@ public final class LiveWatch {
         w.lastRect = new int[] {p.copiedMin().x(), p.copiedMin().z(), p.copiedMax().x(), p.copiedMax().z()};
         w.reruns++;
         // step 5: the flight preview shows this prediction (built from copies, the ghost is gone: Rerun.finish discarded it)
-        obsidivision.ghostpath.preview.PathSnapshot snap = obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString()));
+        obsidivision.ghostpath.preview.PathSnapshot snap = obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, p, w.recording().dimension().identifier().toString(), w.baseRect,
+            changeOf(w)));
         // paths the real world would freeze (the ghost took their chunks from the save, or they are loaded but not ticking)
         List<obsidivision.ghostpath.preview.PathSnapshot.Line> frozen = snap.lines().stream().filter(l -> l.freeze() != null).toList();
         if (!frozen.isEmpty()) {
@@ -432,6 +433,15 @@ public final class LiveWatch {
         }
         w.status = w.dirty ? "changed again, waiting for quiet" : "idle";
         w.chat.accept(line.toString());
+    }
+
+    /** The block change that started the rerun just finished, for the area overlay (a forced rerun is labelled at the trigger). */
+    private static obsidivision.ghostpath.preview.AreaData.@Nullable Change changeOf(Watched w) {
+        Watched.Change c = w.lastTrigger();
+        if (c == null) {
+            return null;
+        }
+        return new obsidivision.ghostpath.preview.AreaData.Change(c.pos() != null ? c.pos() : w.trigger(), c.label(), System.currentTimeMillis());
     }
 
     // ---- is the real machine idle? ----

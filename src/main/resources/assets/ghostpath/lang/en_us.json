@@ -1,5 +1,6 @@
 {
   "key.ghostpath.toggle": "Show or hide flight paths",
+  "key.ghostpath.area": "Show or hide the ghost area (the machine's footprint)",
   "key.ghostpath.inspect": "Inspect (hold: see through blocks; click pins, scroll steps through a stack)",
   "key.category.ghostpath.main": "Ghost Path"
 }

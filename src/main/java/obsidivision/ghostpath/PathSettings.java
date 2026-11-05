@@ -25,6 +25,13 @@ public final class PathSettings {
      */
     public static volatile int watchMargin = 2;
 
+    /** Ghost area overlay ({@code /path area on|off}, an unbound key): the machine's footprint boxes. Off by default. */
+    public static volatile boolean showArea = false;
+    /** {@code /path area watched on|off}: the watched area (margin around the machine's written blocks). */
+    public static volatile boolean areaWatched = false;
+    /** {@code /path area chunks on|off}: the chunks the last run copied, widened ones in a second colour. */
+    public static volatile boolean areaChunks = false;
+
     /**
      * Flight preview (step 5), read by the client in singleplayer (same JVM as the built-in server): whether the paths are
      * drawn ({@code /path show on|off}, the toggle key).

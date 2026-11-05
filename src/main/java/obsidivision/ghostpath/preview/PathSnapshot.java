@@ -17,8 +17,18 @@ import org.jspecify.annotations.Nullable;
  * @param ticks      ticks the run lasted
  * @param limitHit   the run stopped at the tick limit
  * @param lines      one entry per path, identical paths merged ({@link Line#count})
+ * @param area       the ghost area overlay's data from the same run (footprint boxes, watched margin, copied chunks, last trigger), or null
  */
-public record PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines) {
+public record PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines, @Nullable AreaData area) {
+
+    public PathSnapshot(long serial, String source, String dimension, int ticks, boolean limitHit, List<Line> lines) {
+        this(serial, source, dimension, ticks, limitHit, lines, null);
+    }
+
+    /** The same snapshot with the area data (the paths are shared, not copied). */
+    public PathSnapshot withArea(@Nullable AreaData area) {
+        return new PathSnapshot(this.serial, this.source, this.dimension, this.ticks, this.limitHit, this.lines, area);
+    }
 
     /**
      * One path (or several identical ones, {@code count}): the chain entity's position after each of its ticks, from the

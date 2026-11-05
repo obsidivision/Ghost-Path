@@ -254,7 +254,10 @@ public final class MachineRecorder {
         this.saves.end(true);
         RecordingStore.set(recording);
         // step 5: the flight preview shows the real run (copied now, on the server thread)
-        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording));
+        // (the area overlay's chunk layer: the rectangle the ghost check is going to copy, chosen the same way)
+        net.minecraft.world.level.ChunkPos[] rect = obsidivision.ghostpath.ghost.GhostCheck.chooseRectangle(this.level, recording.footprint(), recording.heightmapColumns(), recording.entityAreas(), null);
+        int[] copied = rect == null ? null : new int[] {rect[0].x(), rect[0].z(), rect[1].x(), rect[1].z()};
+        obsidivision.ghostpath.preview.PathStore.publish(serial -> obsidivision.ghostpath.preview.PathBuilder.of(serial, recording, copied));
         this.listener.done(recording);
     }
 

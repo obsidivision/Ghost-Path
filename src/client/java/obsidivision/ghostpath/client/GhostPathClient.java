@@ -25,18 +25,29 @@ public class GhostPathClient implements ClientModInitializer {
     /** Hold: the inspector's ray goes through blocks; with it, a click pins or unpins the hovered path point and the scroll wheel steps through a stack. */
     public static final KeyMapping INSPECT = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ghostpath.inspect", InputConstants.KEY_V, CATEGORY));
 
+    /** Unbound by default: shows or hides the ghost area overlay ({@code /path area on|off}). */
+    public static final KeyMapping AREA = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.ghostpath.area", InputConstants.UNKNOWN.getValue(), CATEGORY));
+
     @Override
     public void onInitializeClient() {
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> {
             PathRenderer.render();
+            AreaRenderer.render();
             Inspector.render();
         });
         HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "inspector"), (graphics, deltaTracker) -> Inspector.hud(graphics));
+        HudElementRegistry.attachElementAfter(VanillaHudElements.CROSSHAIR, Identifier.fromNamespaceAndPath("ghostpath", "area"), (graphics, deltaTracker) -> AreaRenderer.hud(graphics));
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             while (TOGGLE.consumeClick()) {
                 PathSettings.showPaths = !PathSettings.showPaths;
                 if (client.player != null) {
                     client.player.sendOverlayMessage(Component.literal("Flight paths " + (PathSettings.showPaths ? "shown" : "hidden")));
+                }
+            }
+            while (AREA.consumeClick()) {
+                PathSettings.showArea = !PathSettings.showArea;
+                if (client.player != null) {
+                    client.player.sendOverlayMessage(Component.literal("Ghost area " + (PathSettings.showArea ? "shown" : "hidden")));
                 }
             }
             Tails.tick(Minecraft.getInstance());

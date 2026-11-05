@@ -20,7 +20,7 @@ import obsidivision.ghostpath.watch.LiveWatch;
 import obsidivision.ghostpath.watch.Watched;
 
 /**
- * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}, {@code /path watch margin <n>}, {@code /path rerun [x y z]}. Allowed for the owner of a
+ * {@code /path machine <x y z>}, {@code /path kick on|off}, {@code /path limit <ticks>}, {@code /path show on|off}, {@code /path beyond-loaded on|off}, {@code /path interval <ticks> [offset <n>]}, {@code /path inspect hold|toggle}, {@code /path pins clear}, {@code /path watch list|stop [x y z]}, {@code /path watch margin <n>}, {@code /path rerun [x y z]}, {@code /path area on|off}, {@code /path area watched|chunks on|off}. Allowed for the owner of a
  * singleplayer world and for permission level 2 (game master) and up.
  */
 public final class PathCommand {
@@ -61,6 +61,15 @@ public final class PathCommand {
             .then(Commands.literal("beyond-loaded")
                 .then(Commands.literal("on").executes(ctx -> beyondLoaded(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> beyondLoaded(ctx.getSource(), false))))
+            .then(Commands.literal("area")
+                .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "area", true)))
+                .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "area", false)))
+                .then(Commands.literal("watched")
+                    .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "watched", true)))
+                    .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "watched", false))))
+                .then(Commands.literal("chunks")
+                    .then(Commands.literal("on").executes(ctx -> area(ctx.getSource(), "chunks", true)))
+                    .then(Commands.literal("off").executes(ctx -> area(ctx.getSource(), "chunks", false)))))
             .then(Commands.literal("show")
                 .then(Commands.literal("on").executes(ctx -> show(ctx.getSource(), true)))
                 .then(Commands.literal("off").executes(ctx -> show(ctx.getSource(), false))))
@@ -91,6 +100,23 @@ public final class PathCommand {
         PathSettings.beyondLoaded = on;
         source.sendSuccess(() -> Component.literal("Beyond the loaded area: " + (on ? "on (a rerun takes chunks that are not loaded from the save and draws past them, dashed where the real world would freeze)"
             : "off (a rerun uses loaded chunks only)")), false);
+        return 1;
+    }
+
+    /** {@code /path area on|off}, {@code /path area watched|chunks on|off}: the ghost area overlay and its two optional layers. */
+    private static int area(CommandSourceStack source, String layer, boolean on) {
+        switch (layer) {
+            case "watched" -> PathSettings.areaWatched = on;
+            case "chunks" -> PathSettings.areaChunks = on;
+            default -> PathSettings.showArea = on;
+        }
+        String what = switch (layer) {
+            case "watched" -> "watched area layer (margin " + PathSettings.watchMargin + " around the blocks the machine wrote)";
+            case "chunks" -> "copied chunks layer (widened chunks in a second colour)";
+            default -> "ghost area (the machine's footprint: written blocks stronger than read ones, the block change that started the last rerun)";
+        };
+        source.sendSuccess(() -> Component.literal(what.substring(0, 1).toUpperCase(java.util.Locale.ROOT) + what.substring(1) + (on ? " shown" : " hidden")
+            + (on && !PathSettings.showArea && !layer.equals("area") ? " (switch /path area on to see it)" : "")), false);
         return 1;
     }
 

@@ -468,6 +468,11 @@ public class LiveRerunTest {
                         helper.assertTrue(p.footprint().containsPosition(helper.absolutePos(new BlockPos(82, 2, 2))), "the ghost did not follow the line to its end");
                         helper.assertTrue(p.ticks() >= 160, "the ghost run was too short for 80 repeaters: " + p.ticks());
                         helper.assertTrue(line.contains("widened"), "chat line: " + line);
+                        // the area overlay marks the chunks the widened run added
+                        obsidivision.ghostpath.preview.AreaData area = obsidivision.ghostpath.preview.PathStore.latest().area();
+                        helper.assertTrue(area != null && area.base() != null && area.widenedChunks() > 0 && area.chunkCells().size() == (p.copiedMax().x() - p.copiedMin().x() + 1) * (p.copiedMax().z() - p.copiedMin().z() + 1),
+                            "the snapshot's area does not mark widened chunks: " + area);
+                        LOG.info("[ghostpath] widen test: area overlay: {} chunk cells, {} widened", area.chunkCells().size(), area.widenedChunks());
                         assertNotFired(helper, level);
                         forceWide(helper, false);
                         finish(helper);
