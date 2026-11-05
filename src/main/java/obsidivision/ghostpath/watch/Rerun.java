@@ -62,6 +62,7 @@ final class Rerun {
     private boolean discarded;
 
     Rerun(Watched watch, ServerLevel real, ChunkPos min, ChunkPos max, boolean widened) throws IOException {
+        int[] core = watch.baseRect;
         this.watch = watch;
         this.real = real;
         this.min = min;
@@ -76,7 +77,7 @@ final class Rerun {
             Recording rec = watch.recording();
             // a widened run (the chain reached beyond the first area) takes the chunks that are not loaded from the save
             this.prepared = GhostCopy.prepare(real, this.ghost, min, max,
-                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened && obsidivision.ghostpath.PathSettings.beyondLoaded, java.util.Set.of());
+                new GhostCopy.Start(rec.weatherAtStart(), rec.clocksAtStart(), rec.startGameTime()), widened && obsidivision.ghostpath.PathSettings.beyondLoaded, java.util.Set.of(), core);
         } catch (RuntimeException e) {
             this.ghost.discard();
             throw e;

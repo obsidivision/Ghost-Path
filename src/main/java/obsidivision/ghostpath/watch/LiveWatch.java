@@ -294,6 +294,9 @@ public final class LiveWatch {
 
     private static void start(Watched w, ServerLevel level, ChunkPos[] rect, boolean widened) {
         w.widenRounds = widened ? w.widenRounds + 1 : 0;
+        if (!widened) {
+            w.baseRect = new int[] {rect[0].x(), rect[0].z(), rect[1].x(), rect[1].z()};
+        }
         try {
             run = new Rerun(w, level, rect[0], rect[1], widened);
             w.dirty = false;

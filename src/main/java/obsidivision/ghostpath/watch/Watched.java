@@ -30,6 +30,8 @@ public final class Watched {
     int cancelled;
     /** Widenings in a row of the current rerun (0 for a run that started from a change). */
     int widenRounds;
+    /** The chunk rectangle of the last unwidened run: the machine's own copied area, whose chunks keep their real loading levels in widened runs. */
+    int @Nullable [] baseRect;
     int failures;
     int widenings;
     String status = "idle";

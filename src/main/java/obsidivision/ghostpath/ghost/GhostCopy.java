@@ -326,6 +326,17 @@ public final class GhostCopy {
      * ones even if they are loaded.
      */
     public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start, boolean allowDisk, Set<ChunkPos> forceDisk) {
+        return prepare(real, ghost, min, max, start, allowDisk, forceDisk, null);
+    }
+
+    /**
+     * {@code core} ({@code {minX, minZ, maxX, maxZ}} in chunks, or null): the machine's own copied area, the rectangle of the first,
+     * unwidened copy. Chunks inside it keep the loading levels the real world has (ruling: a lazy chunk there stays lazy, its entities stay
+     * frozen, as in the recording and in the ghost check); only chunks that widening added are made "as if loaded" (save chunks always,
+     * lazy loaded chunks too). Known limit: a core chunk next to a chunk that is made ticking is lifted by the ticket spreading
+     * (level 33 becomes 32: block ticks run there, entities still do not).
+     */
+    public static Prepared prepare(ServerLevel real, GhostLevel ghost, ChunkPos min, ChunkPos max, Start start, boolean allowDisk, Set<ChunkPos> forceDisk, int @org.jspecify.annotations.Nullable [] core) {
         if (CauseTracker.active() != null) {
             throw new IllegalStateException("ghost copy during a recording");
         }
@@ -359,8 +370,17 @@ public final class GhostCopy {
         // a widened run (allowDisk) predicts where things would go "as if loaded": a loaded chunk whose entities do not tick in the real world
         // (border levels 32/33, "lazy") is given the levels of a ticking one too, like a chunk from the save; the flag keeps the difference
         Map<Long, String> status = realNotTicking(real, chunks);
-        boolean upgrade = allowDisk && status.containsValue("lazy");
-        Prepared prepared = new Prepared(real, ghost, chunks, start, disk, status, upgrade, allowDisk ? status : Map.of());
+        Map<Long, String> upgradeStatus = new LinkedHashMap<>();
+        if (allowDisk) {
+            for (ChunkPos c : chunks) {
+                boolean inCore = core != null && c.x() >= core[0] && c.x() <= core[2] && c.z() >= core[1] && c.z() <= core[3];
+                if (!inCore && status.containsKey(c.pack())) {
+                    upgradeStatus.put(c.pack(), status.get(c.pack()));
+                }
+            }
+        }
+        boolean upgrade = upgradeStatus.containsValue("lazy");
+        Prepared prepared = new Prepared(real, ghost, chunks, start, disk, status, upgrade, upgradeStatus);
         if (disk.isEmpty()) {
             prepared.ensureStarted(true); // nothing to wait for: tickets now, as before
         } // else: the first poll() starts it, once no disk chunk is being unloaded

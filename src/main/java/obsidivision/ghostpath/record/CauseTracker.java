@@ -992,7 +992,7 @@ public final class CauseTracker {
 
     /**
      * {display, key}. Display: the first caller outside the random classes; if that is a helper in net.minecraft.util
-     * (Mth, Util), its caller is added. Key: "File.java:line" of the first frame outside those helpers (allowlist key).
+     * (Mth, Util), its caller is added. Key: "full.class.Name.method" of the first frame outside those helpers (allowlist key; the line is only in the display).
      */
     private static String[] callSite() {
         return StackWalker.getInstance().walk(frames -> {
@@ -1009,7 +1009,7 @@ public final class CauseTracker {
                     parts.add(name);
                 }
                 if (!helper) {
-                    key = f.getFileName() + ":" + f.getLineNumber();
+                    key = cls + "." + f.getMethodName(); // no line number: it differs between builds of the jar (a second checkout, a Minecraft update)
                     break;
                 }
             }

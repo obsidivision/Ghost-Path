@@ -98,8 +98,9 @@ public class GhostDiskEntitiesTest {
             // the saved state (the real TNT went on ticking while the ghost chunks loaded): the fuse it had when it was saved, the same place
             helper.assertTrue(g.getFuse() == 250 && g.position().equals(realTnt.position()), "TNT from the save: fuse " + g.getFuse() + " at " + g.position()
                 + ", saved with fuse 250 at " + realTnt.position());
-            helper.assertTrue(itemB.getFirst().getItem().is(Items.DIAMOND) && itemB.getFirst().getItem().getCount() == 5 && itemB.getFirst().position().equals(realItem.position()),
-                "item from the save: " + itemB.getFirst().getItem() + " at " + itemB.getFirst().position());
+            // the item stack as saved; the position only roughly (a real item may have been nudged by the other entity while the ghost chunks loaded)
+            helper.assertTrue(itemB.getFirst().getItem().is(Items.DIAMOND) && itemB.getFirst().getItem().getCount() == 5 && itemB.getFirst().position().distanceTo(realItem.position()) < 1.0,
+                "item from the save: " + itemB.getFirst().getItem() + " at " + itemB.getFirst().position() + ", real item at " + realItem.position());
             // the ghost ticks them like any other entity: the fuse runs down
             for (int i = 0; i < 10; i++) {
                 ghost.tickGhost();

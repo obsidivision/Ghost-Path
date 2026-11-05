@@ -101,7 +101,7 @@ public class RecordingRulesTest {
                 helper.assertTrue(!r.limitHit() && r.ticks() < 200, "a tagged mob held the recording open: " + r.ticks() + " ticks, " + r.pendingAtEnd());
                 helper.assertTrue(r.events().stream().anyMatch(e -> e.kind() == ChainEvent.Kind.UNSEEDED_DRAW && e.detail().endsWith(CauseTracker.INEXACT_MOB_AI)),
                     "no 'inexact: mob AI' draw from the sheep's AI");
-                helper.assertTrue(r.events().stream().anyMatch(e -> e.kind() == ChainEvent.Kind.UNSEEDED_DRAW && e.detail().contains("Sheep.java:176")
+                helper.assertTrue(r.events().stream().anyMatch(e -> e.kind() == ChainEvent.Kind.UNSEEDED_DRAW && e.detail().contains("Sheep.")
                     && e.detail().endsWith(CauseTracker.INEXACT_MOB)), "sheared wool spread not marked 'inexact: mob'");
                 helper.assertTrue(r.unseededDrawsNotAllowed() == 0, "warnings left (dispenser slot is seeded, wool is inexact): " + warnings);
                 helper.assertTrue(r.summary().stream().anyMatch(l -> l.startsWith("Inexact:") && l.contains("may not repeat exactly")),
