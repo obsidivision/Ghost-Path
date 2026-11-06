@@ -116,7 +116,7 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect, and one 
 
 - **Portals** are not simulated; a path that reaches one ends there. Entities that change dimension are not followed.
 - **Players** are not in the hidden copy: a player standing in the machine's way, riding something, or pushed by TNT is not predicted. **Player-owned ender pearls** keep chunks loaded around them in the real game; the copy cannot do that, and the summary says `player-owned pearl: chunk loading not simulated`. (A machine's own pearls, from a dispenser, load nothing in the real game either.)
-- **Mobs**: a machine that depends on mobs (their AI, sheep shearing, villagers, bees) cannot be predicted exactly. The summary says `inexact`.
+- A pearl thrown by a player who is online keeps chunks loaded around it while it flies, so it does not freeze in a lazy chunk like a dispenser's pearl. The freeze dot is therefore only a promise for pearls without an online owner.\n- **Mobs**: a machine that depends on mobs (their AI, sheep shearing, villagers, bees) cannot be predicted exactly. The summary says `inexact`.
 - **Sculk sensors and other listeners** far from the machine, and anything the machine only reaches through vibrations to mobs, are not followed. Points of interest (villager jobs, bees, lightning rods) are not copied.
 - **Loot** (a block's drops, such as flint from gravel) is rolled from the same numbers in the real run and the copy, and your world's own loot sequences are not used up by a recording.
 - **Chance outside the machine**: random block ticks (crops, fire, ice), weather changes, and mob spawning do not run in the hidden copy.
