@@ -1,12 +1,12 @@
 # Ghost Path: tutorial
 
-Ghost Path shows where your TNT and projectiles will go before they do. It runs your machine once in a hidden copy of the world, draws the result as lines in the world, and runs it again when you change the machine. Your real machine is never fired.
+Ghost Path shows where your TNT and projectiles will go before they do. The first `/path machine` command fires the real machine, records its effects, and restores the tracked changes. It checks the result in a hidden copy and draws the paths. When you edit the machine afterward, predictions rerun in a fresh hidden copy. Unrelated world activity continues during recording; see the README for restoration limitations.
 
 ## 1. Install
 
 1. Minecraft Java **26.2** with **Fabric Loader 0.19.5 or newer**.
 2. Put `ghostpath-0.1.0.jar` and **Fabric API 0.161.0+26.2** in the `mods` folder.
-3. Start a **singleplayer** world with cheats on (the commands need operator rights; the owner of a singleplayer world has them). It is not meant for servers.
+3. Start a **singleplayer** world. Commands allow its owner even with cheats off; other players need operator permission level 2 or higher. It is not meant for servers.
 
 ## 2. Your first preview
 
@@ -14,7 +14,7 @@ Ghost Path shows where your TNT and projectiles will go before they do. It runs 
 2. Look at the trigger and note its coordinates (F3).
 3. Run `/path machine <x> <y> <z>`.
 
-The mod presses the trigger as a right click would, follows everything it sets in motion until things go quiet, and puts the world back. The chat prints a summary:
+The mod presses the trigger as a right click would, follows everything it sets in motion until things go quiet, and restores the tracked machine changes. The chat prints a summary:
 
 | Line | Meaning |
 |---|---|

@@ -40,6 +40,11 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 ## Layout
 - `src/main` common code, `src/client` client-only code (`GhostPathClient`, `PathRenderer`, `Tails`, client mixin), `src/gametest` game tests (mod id `ghostpath-gametest`, entrypoint keys `fabric-gametest` and `fabric-client-gametest`).
 
+## Current follow-up status
+- `CycleDetector` and `SegmentDedup` exist on the testing branch with isolated GameTests, but have no production callers. Clocked-machine support and segment-level renderer deduplication are not implemented by these helpers alone.
+- Latest reported unresolved full-suite failures: `loot_drops` and `a_stuck_arrow_is_settled`. The unrelated-clock collision read and sheep-tagging failures remain unclassified. Historical passing runs below do not establish that these failures are fixed.
+- Validation attempted in ChatGPT Work: setup failed with apt `setgroups` / `seteuid` permission errors; only Java 17 was installed. `./gradlew genSources` failed downloading Gradle 9.8.2 with `java.net.SocketException: Network is unreachable`. No build or GameTest result was obtained in this environment. Minecraft behavior changes are paused under the source-check rule above.
+
 ## Status
 | Step | State |
 |---|---|
@@ -94,7 +99,7 @@ Jar: `build/libs/ghostpath-0.1.0.jar` (Fabric Loader 0.19.5, Fabric API 0.161.0+
 7. **Continuation:** `/path limit 10`, then record a dispenser shooting an arrow (or an ender pearl, a snowball, a potion) up or far: the line ends with `limit t+10`, and a lighter line goes on, labelled `continued: hit block t+N` (or `continuing...` for a moment). At the point where it ends: no splash, no teleport, no particles, no sound, nothing in the world; the arrow of the continuation never appears as an entity. Frame rate while it runs (3 ms per client tick), and `/path limit 2000` again to see the real end for comparison.
 8. **Many entities:** a big TNT machine (hundreds of paths): frame rate; the cap is 30000 segments per frame.
 9. **Other dimension:** a machine in the Nether or End is drawn only while you are in that dimension.
-Done in step 6: hovering, boxes, panels, pins, stepping. (Not built: continuation points are not pickable; a toggle instead of a hold; commands for pins.)
+Done in step 6 and its follow-up: hovering, boxes, panels, pins, stepping, continuation-point picking, inspect hold/toggle, and `/path pins clear`. Continuation points remain unpinnable.
 
 ### Step 6: what to look at in the game (the cloud cannot show a real GPU, a real mouse or real feel)
 Same machine as above, `/path machine x y z`. Key **V** (controls, "Ghost Path", "Inspect"; rebindable).

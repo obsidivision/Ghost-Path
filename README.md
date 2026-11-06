@@ -1,20 +1,20 @@
 # Ghost Path
 
-Ghost Path shows where TNT and projectiles will go before you pull the lever. It runs your machine once in a hidden copy of the world, then draws every TNT, arrow, pearl, item and falling block as a line in the world, with the reason each one ends (`exploded`, `hit block`, ...). When you change the machine, the lines update by themselves. Your real world is not changed.
+Ghost Path shows where TNT and projectiles will go before you pull the lever. The first `/path machine` command fires the real machine, records its chain of effects, and restores the tracked changes. It then checks that recording against a hidden copy of the world and draws the paths with their end reasons (`exploded`, `hit block`, ...). Later edits update the prediction by running a fresh hidden copy. Restoration has the limitations listed below; unrelated world activity continues during recording.
 
 ## What you need
 
-- Minecraft Java **26.2**, Fabric Loader **0.20.1** or newer, Java 25.
+- Minecraft Java **26.2**, Fabric Loader **0.19.5** or newer (the declared minimum and build dependency), Java 25.
 - **Fabric API 0.161.0+26.2** (or a newer 26.2 build).
 - **Singleplayer** (and a LAN world you host). It is not meant for servers or multiplayer.
 
-Put `ghostpath-0.1.0.jar` and the Fabric API jar in your `mods` folder. Cheats must be on in the world (the commands need operator rights; the owner of a singleplayer world always has them).
+Put `ghostpath-0.1.0.jar` and the Fabric API jar in your `mods` folder. Commands allow the singleplayer owner, including with cheats off, or a player with operator permission level 2 or higher.
 
 ## How to use it
 
 1. Build your machine. Stand where you can see it.
 2. Look at the block that starts it, and run `/path machine <x> <y> <z>` with that block's position. Supported triggers: **lever, button, note block** (a right click tunes it one note up), **trapdoor, door and fence gate** (not iron: they open by hand), **repeater** (delay +1) and **comparator** (switches mode). Each is pressed the way a right click does it, without a player (a fence gate does not turn to face you and makes no sound). Anything else: the chat lists the supported blocks. A rerun first puts the trigger back to the state you recorded (for a note block: the recorded note) and presses it again.
-3. The mod presses the trigger, follows everything the machine sets in motion until it is quiet, and puts the world back as it was. The chat shows a summary. Lines and dots now hang in the world.
+3. The mod presses the trigger, follows everything the machine sets in motion until it is quiet, and restores the tracked machine changes. The chat shows a summary. Lines and dots now hang in the world.
 
 What the summary means:
 

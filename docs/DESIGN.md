@@ -1,6 +1,6 @@
 # Ghost Path: design (Minecraft Java 26.2, Fabric)
 
-Target: Minecraft Java **26.2**, Fabric Loader 0.20.1, Fabric API 0.161.0+26.2, Java 25.
+Target: Minecraft Java **26.2**, Fabric Loader 0.19.5 minimum (current build dependency), Fabric API 0.161.0+26.2, Java 25.
 No mapping layer: 26.x is unobfuscated, so code uses Mojang's own names (`PrimedTnt`, `ServerLevel`, `LevelTicks`).
 Everything below marked **[verified 26.2]** was read in the sources from `./gradlew genSources` (file and line given).
 Anything not marked is design intent and still unchecked.
