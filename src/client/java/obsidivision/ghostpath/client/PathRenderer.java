@@ -39,6 +39,8 @@ public final class PathRenderer {
     /** A cap on the segments drawn in one frame (a path of 6000 ticks, times many paths, would cost more than it shows). */
     private static final int MAX_SEGMENTS = 30_000;
 
+    static void resetSession() { MORPH.reset(); lastFrame = null; lastMorphing = false; }
+
     private PathRenderer() {
     }
 
@@ -102,7 +104,7 @@ public final class PathRenderer {
         if (!PathSettings.showPaths) {
             return;
         }
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         Minecraft mc = Minecraft.getInstance();
         ClientLevel level = mc.level;
         if (level == null) {

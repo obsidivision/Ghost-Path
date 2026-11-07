@@ -87,7 +87,7 @@ public final class AreaRenderer {
 
     /** The latest snapshot's area, if it is for the dimension the player is in; else null. */
     static AreaData area() {
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         ClientLevel level = Minecraft.getInstance().level;
         if (s == null || s.area() == null || level == null || !level.dimension().identifier().toString().equals(s.dimension())) {
             return null;

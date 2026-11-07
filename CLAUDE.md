@@ -35,7 +35,7 @@ Fabric mod for **Minecraft Java 26.2** that shows where TNT and projectiles will
 - A game-test mod only exists if `fabricApi.configureTests { createSourceSet = true }` is set (already is). Never trust "N tests passed" without checking that our test's name appears in the log.
 
 ## Environment
-`fabric.mod.json` says `"environment": "*"` **only so the game tests load** on a dedicated headless server. The mod is meant to be used client-side in singleplayer (built-in server). Don't read `*` as a promise of dedicated-server or multiplayer support.
+`fabric.mod.json` says `"environment": "*"` **only so the game tests load** on a dedicated headless server. The server-support follow-up adds dedicated Fabric server prediction transport and a client-only estimate fallback. See README "Servers and client-only estimates" and DESIGN "Server modes" for supported behavior and remaining integrations.
 
 ## Layout
 - `src/main` common code, `src/client` client-only code (`GhostPathClient`, `PathRenderer`, `Tails`, client mixin), `src/gametest` game tests (mod id `ghostpath-gametest`, entrypoint keys `fabric-gametest` and `fabric-client-gametest`).

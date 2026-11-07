@@ -153,13 +153,19 @@ public final class Inspector {
 
     /** Where pin {@code i} points in the latest snapshot. */
     public static Pin.Resolution resolve(int i) {
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         return s == null ? new Pin.Resolution(-1, -1, "no prediction yet") : PINS.get(i).resolve(s);
     }
 
     /** For the client game test: a pin made without a click. */
     public static void addPinForTest(Pin pin) {
         PINS.add(pin);
+    }
+
+    /** Client connection boundary: no hover/readout from another world may survive. */
+    static void resetSession() {
+        clearPins(); realData = null; hoverGhost = null; hoverReal = null; hoverTail = null; hoverSaved = null;
+        realLastId = -1; realSelected = 0;
     }
 
     public static void clearPins() {
@@ -175,7 +181,7 @@ public final class Inspector {
         hoverSaved = null;
         hoverReal = null;
         hoverTail = null;
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         if (!PathSettings.showPaths || level == null) {
             return;
         }
@@ -385,6 +391,7 @@ public final class Inspector {
         GhostHover hover = hoverGhost;
         Minecraft mc = Minecraft.getInstance();
         if (hover != null && mc.player != null) {
+            if (hover.snapshot().source().equals("client estimate")) { Toasts.show("Moving client estimates cannot be pinned"); return true; }
             PathSnapshot.Line l = hover.path();
             Pin pin = pinOf(hover);
             if (!PINS.contains(pin) && PINS.size() >= MAX_PINS) {
@@ -427,7 +434,7 @@ public final class Inspector {
             return;
         }
         Font font = mc.font;
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         GhostHover ghost = hoverGhost;
         TailHover tail = hoverTail;
         List<String> hover = hoverPanel(ghost);
@@ -486,7 +493,7 @@ public final class Inspector {
         RealData data = realData;
         if (r != null) {
             if (data == null || data.hoveredId() != r.id()) {
-                return List.of("real entity " + r.id(), "reading the server...");
+                return List.of("real entity " + r.id(), Minecraft.getInstance().getSingleplayerServer() == null ? "server readout unavailable" : "reading the server...");
             }
             EntityInspector.Stack st = data.stack();
             int n = st.members().size();

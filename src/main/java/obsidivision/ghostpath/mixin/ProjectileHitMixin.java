@@ -12,6 +12,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(Projectile.class)
 public abstract class ProjectileHitMixin {
+    /** Official 26.2 Projectile.java:318 canHitEntity: exclude the visible original of a client simulation copy. */
+    @Inject(method = "canHitEntity", at = @At("HEAD"), cancellable = true)
+    private void ghostpath$ignoreOriginal(net.minecraft.world.entity.Entity target, CallbackInfoReturnable<Boolean> cir) {
+        Projectile self = (Projectile) (Object) this;
+        if (PreviewSim.simulating(self) && self.getUUID().equals(target.getUUID())) cir.setReturnValue(false);
+    }
+
     /**
      * 26.2 Projectile.java:245 {@code protected ProjectileDeflection hitTargetOrDeflectSelf(HitResult)}: the one place every
      * projectile hit goes through (ThrowableProjectile.java:63, AbstractArrow.java:295 and :312, AbstractHurtingProjectile.java:93,

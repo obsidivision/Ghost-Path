@@ -14,6 +14,8 @@ import org.jspecify.annotations.Nullable;
 public final class PreviewSim {
     private static @Nullable Entity current;
     private static HitResult.@Nullable Type hit;
+    /** Target of the latest simulated tick, retained after end() for diagnostics and regression checks. */
+    public static java.util.@Nullable UUID lastHitEntity;
 
     /**
      * Counters for the effects off (read by the client game test). {@code suppressed*}: the client level was asked for a
@@ -34,6 +36,7 @@ public final class PreviewSim {
     public static void begin(Entity copy) {
         current = copy;
         hit = null;
+        lastHitEntity = null;
     }
 
     /** Effects on again. Returns the hit the copy made during the tick, or null. */
@@ -58,6 +61,7 @@ public final class PreviewSim {
     public static void hit(HitResult result) {
         if (hit == null) {
             hit = result.getType();
+            if (result instanceof net.minecraft.world.phys.EntityHitResult entityHit) lastHitEntity = entityHit.getEntity().getUUID();
         }
     }
 }

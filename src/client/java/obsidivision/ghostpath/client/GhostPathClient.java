@@ -14,7 +14,7 @@ import net.minecraft.resources.Identifier;
 import obsidivision.ghostpath.PathSettings;
 
 /**
- * Client side of the flight preview (build step 5). Singleplayer only: the latest prediction is read straight from the
+ * Client side of the flight preview. Singleplayer predictions are read straight from the
  * built-in server ({@code PathStore}, no packets). Registers the toggle key (default G, "Ghost Path" in the controls), draws
  * the paths just before the frame's gizmos are collected, and runs the continuations of projectiles that were still flying
  * when the ghost run stopped at its tick limit.
@@ -30,6 +30,7 @@ public class GhostPathClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        RemotePaths.init();
         obsidivision.ghostpath.preview.PathStore.continuationSource = Tails::copyOut;
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> {
             PathRenderer.render();
@@ -49,6 +50,7 @@ public class GhostPathClient implements ClientModInitializer {
                 PathSettings.showArea = !PathSettings.showArea;
                 Toasts.show("Ghost area " + (PathSettings.showArea ? "shown" : "hidden"));
             }
+            Estimates.tick(client);
             Tails.tick(Minecraft.getInstance());
             Inspector.tick(Minecraft.getInstance());
         });

@@ -6,9 +6,17 @@ Ghost Path shows where TNT and projectiles will go before you pull the lever. Th
 
 - Minecraft Java **26.2**, Fabric Loader **0.19.5** or newer (the declared minimum and build dependency), Java 25.
 - **Fabric API 0.161.0+26.2** (or a newer 26.2 build).
-- **Singleplayer** (and a LAN world you host). It is not meant for servers or multiplayer.
+- **Singleplayer**, or a Fabric server with Ghost Path installed for machine predictions. On unmodified servers, client-only installation provides limited visible-entity estimates (see below).
 
 Put `ghostpath-0.1.0.jar` and the Fabric API jar in your `mods` folder. Commands allow the singleplayer owner, including with cheats off, or a player with operator permission level 2 or higher.
+
+## Servers and client-only estimates
+
+With Ghost Path and Fabric API installed on both a Fabric server and a client, operators (permission level 2+) can use `/path machine` and watches. The first command fires the **real** machine and restores only tracked changes, with all the restoration limits below. Players are not restored or included in ghost copies: keep people away from recordings and explosions. Predictions are shared with connected modded clients; clients joining later receive the latest prediction. Only the latest machine prediction is displayed. Transfers are capped at 8 MiB compressed and sent in small packets over several ticks; oversized predictions stay server-side and produce a server-log warning.
+
+On an **unmodified server**, install Ghost Path and Fabric API only on your client. Key G toggles estimates for up to 32 visible TNT/projectile entities. The client simulates copies against blocks it has loaded, for at most 160 ticks per refresh and within a small work budget. Labels and inspector panels say **estimate**. Position/velocity updates, lag, moving entities, missing chunks, unsupported projectile state and server plugins can change the outcome. Explosions and their effects are not simulated; `estimate: fuse expires` predicts only the TNT flight and fuse. No machine recording, undo, reruns or `/path` server commands are available there. Estimates cannot be pinned.
+
+Remote live entity readouts and saved-path display are not synchronized yet. The remote prediction's path inspector, dots, pins and ghost-area geometry use transferred data. Key G and the area/inspect keys are local controls; server-side visual-setting commands do not configure remote clients.
 
 ## How to use it
 
@@ -114,9 +122,12 @@ Keys (Options, Controls, "Ghost Path"): **G** show/hide, **V** inspect, and one 
 
 ## Known gaps
 
+- **Restoration is scoped to tracked chain changes.** Unrelated activity continues. Positions changed by both the chain and other activity are restored too, so later edits at those positions can be lost. Players, world time and weather are not restored. Some transient entity state and block entities first noticed only after a change cannot be restored exactly. Failed chunk reloads can leave entities or ticks unrestored; the summary reports these gaps. Forced saves (`/save-all`) and crashes during recording are not protected by the autosave hold.
+
 - **Portals** are not simulated; a path that reaches one ends there. Entities that change dimension are not followed.
-- **Players** are not in the hidden copy: a player standing in the machine's way, riding something, or pushed by TNT is not predicted. **Player-owned ender pearls** keep chunks loaded around them in the real game; the copy cannot do that, and the summary says `player-owned pearl: chunk loading not simulated`. (A machine's own pearls, from a dispenser, load nothing in the real game either.)
-- A pearl thrown by a player who is online keeps chunks loaded around it while it flies, so it does not freeze in a lazy chunk like a dispenser's pearl. The freeze dot is therefore only a promise for pearls without an online owner.\n- **Mobs**: a machine that depends on mobs (their AI, sheep shearing, villagers, bees) cannot be predicted exactly. The summary says `inexact`.
+- **Players** are not in the hidden copy: a player standing in the machine's way, riding something, or pushed by TNT is not predicted. **Player-owned ender pearls** keep chunks loaded around them in the real game; the copy cannot do that, and the summary says `player-owned pearl: chunk loading not simulated`. Ownerless pearls do not create those tickets; dispensers drop ender pearls as items rather than launching them.
+- A pearl thrown by a player who is online keeps chunks loaded around it while it flies, so it does not freeze in a lazy chunk like an ownerless pearl. The freeze dot is therefore only a promise for pearls without an online owner.
+- **Mobs**: a machine that depends on mobs (their AI, sheep shearing, villagers, bees) cannot be predicted exactly. The summary says `inexact`.
 - **Sculk sensors and other listeners** far from the machine, and anything the machine only reaches through vibrations to mobs, are not followed. Points of interest (villager jobs, bees, lightning rods) are not copied.
 - **Loot** (a block's drops, such as flint from gravel) is rolled from the same numbers in the real run and the copy, and your world's own loot sequences are not used up by a recording.
 - **Chance outside the machine**: random block ticks (crops, fire, ice), weather changes, and mob spawning do not run in the hidden copy.

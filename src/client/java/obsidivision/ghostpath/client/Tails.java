@@ -189,7 +189,7 @@ public final class Tails {
     /** End of every client tick: (re)creates the jobs for a new snapshot and runs them for a few milliseconds. */
     static void tick(Minecraft mc) {
         ClientLevel level = mc.level;
-        PathSnapshot s = PathStore.latest();
+        PathSnapshot s = PathStore.clientLatest();
         if (level == null || s == null) {
             if (!JOBS.isEmpty()) {
                 JOBS.clear();

@@ -36,6 +36,10 @@ public class GhostPath implements ModInitializer {
     @Override
     public void onInitialize() {
         Config.load();
+        obsidivision.ghostpath.network.ServerSnapshots.init();
+        ServerTickEvents.END_SERVER_TICK.register(obsidivision.ghostpath.network.ServerSnapshots::tick);
+        ServerLifecycleEvents.SERVER_STOPPED.register(server -> obsidivision.ghostpath.network.ServerSnapshots.clear());
+        net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> obsidivision.ghostpath.network.ServerSnapshots.queue(handler.getPlayer()));
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> PathCommand.register(dispatcher));
         ServerTickEvents.END_SERVER_TICK.register(MachineRecorder::tick);
         ServerTickEvents.END_SERVER_TICK.register(obsidivision.ghostpath.watch.LiveWatch::tick);

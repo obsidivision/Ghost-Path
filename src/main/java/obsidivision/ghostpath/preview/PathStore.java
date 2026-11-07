@@ -11,6 +11,7 @@ import org.jspecify.annotations.Nullable;
 public final class PathStore {
     private static volatile @Nullable PathSnapshot latest;
     private static long serial;
+    private static volatile @Nullable PathSnapshot remote;
 
     private PathStore() {
     }
@@ -49,6 +50,13 @@ public final class PathStore {
         }
         return out;
     }
+
+    /** Client thread, for a fully decoded remote snapshot. */
+    public static void receive(PathSnapshot snapshot) { remote = snapshot; }
+
+    public static @Nullable PathSnapshot clientLatest() { return remote != null ? remote : latest; }
+
+    public static void clearRemote() { remote = null; }
 
     public static void clear() {
         latest = null;

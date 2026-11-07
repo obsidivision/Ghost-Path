@@ -62,7 +62,7 @@ public class CycleDetectorTest {
             detector.add(50 + i, 0x81234567L);
         }
         helper.assertTrue(detector.period().orElse(-1) == 1, "period one");
-        helper.assertTrue(detector.firstRepeatTick().orElse(-1) == 54, "period-one first repeat tick");
+        helper.assertTrue(detector.firstRepeatTick().orElse(-1) == 51, "period-one first repeat tick");
         helper.succeed();
     }
 
@@ -77,6 +77,29 @@ public class CycleDetectorTest {
             rejected = true;
         }
         helper.assertTrue(rejected, "duplicate ticks must be rejected");
+        helper.succeed();
+    }
+    @GameTest
+    public void rejectsSkippedTicks(GameTestHelper helper) {
+        CycleDetector detector = new CycleDetector();
+        detector.add(10, 1);
+        boolean rejected = false;
+        try { detector.add(20, 1); } catch (IllegalArgumentException expected) { rejected = true; }
+        helper.assertTrue(rejected, "skipped ticks must not produce sample-based periods");
+        helper.succeed();
+    }
+
+    @GameTest
+    public void matchingPrefixDoesNotConfirmAndDivergenceRevokes(GameTestHelper helper) {
+        CycleDetector detector = new CycleDetector();
+        long[] prefix = {1, 2, 3, 4, 5, 6, 1, 2, 3, 4, 99, 100};
+        for (int i = 0; i < prefix.length; i++) detector.add(i, prefix[i]);
+        helper.assertTrue(detector.period().isEmpty(), "a matching four-sample prefix is not a full cycle");
+        CycleDetector stable = new CycleDetector();
+        for (int i = 0; i < 15; i++) stable.add(i, i % 5);
+        helper.assertTrue(stable.period().orElse(-1) == 5, "three complete periods confirm");
+        stable.add(15, 99);
+        helper.assertTrue(stable.period().isEmpty(), "a mismatch revokes repetition");
         helper.succeed();
     }
 }

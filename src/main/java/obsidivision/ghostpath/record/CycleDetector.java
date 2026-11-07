@@ -1,85 +1,49 @@
 package obsidivision.ghostpath.record;
 
-import java.util.ArrayDeque;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
 
+/**
+ * Bounded repetition evidence for consecutive per-tick fingerprints. Requires three complete periods and at least four
+ * repeated samples, rather than a matching prefix. A later mismatch revokes the result. Hash equality is evidence of
+ * repetition, not proof that an incompletely modelled machine will repeat forever; never use this alone to stop a run.
+ */
 public final class CycleDetector {
     private static final int MAX_TICKS = 20_000;
-    private static final int CONFIRMATION_TICKS = 4;
-
-    private final long[] recentHashes = new long[CONFIRMATION_TICKS];
-    private final long[] recentTicks = new long[CONFIRMATION_TICKS];
-    private final ArrayDeque<Window> windows = new ArrayDeque<>();
-    private final Map<Sequence, ArrayDeque<Long>> occurrences = new HashMap<>();
-
+    private final long[] hashes = new long[MAX_TICKS];
+    private final int[] matches = new int[MAX_TICKS / 3 + 1];
     private long lastTick;
     private boolean hasLastTick;
-    private long nextIndex;
-    private int retainedTicks;
+    private long samples;
     private int detectedPeriod;
     private long detectedFirstRepeatTick;
 
     public void add(long tick, long stateHash) {
-        if (hasLastTick && tick <= lastTick) {
-            throw new IllegalArgumentException("ticks must be strictly increasing");
+        if (hasLastTick && (lastTick == Long.MAX_VALUE || tick != lastTick + 1)) {
+            throw new IllegalArgumentException("ticks must be consecutive");
         }
         lastTick = tick;
         hasLastTick = true;
-
-        long index = nextIndex++;
-        int slot = (int) (index & (CONFIRMATION_TICKS - 1));
-        recentHashes[slot] = stateHash;
-        recentTicks[slot] = tick;
-        if (retainedTicks < MAX_TICKS) {
-            retainedTicks++;
-        }
-
-        long oldestRetainedIndex = index - retainedTicks + 1;
-        while (!windows.isEmpty() && windows.peekFirst().startIndex < oldestRetainedIndex) {
-            Window expired = windows.removeFirst();
-            ArrayDeque<Long> starts = occurrences.get(expired.sequence);
-            starts.removeFirst();
-            if (starts.isEmpty()) {
-                occurrences.remove(expired.sequence);
+        int retained = (int) Math.min(samples, MAX_TICKS - 1);
+        detectedPeriod = 0;
+        for (int p = 1; p < matches.length && p <= retained; p++) {
+            int slot = (int) Math.floorMod(samples - p, (long) MAX_TICKS);
+            matches[p] = hashes[slot] == stateHash ? Math.min(matches[p] + 1, MAX_TICKS - p) : 0;
+            if (detectedPeriod == 0 && matches[p] >= Math.max(4, 2 * p)) {
+                detectedPeriod = p;
+                detectedFirstRepeatTick = tick - matches[p] + 1;
             }
         }
-
-        if (index < CONFIRMATION_TICKS - 1) {
-            return;
-        }
-
-        long startIndex = index - CONFIRMATION_TICKS + 1;
-        Sequence sequence = new Sequence(
-            recentHashes[(int) (startIndex & 3)],
-            recentHashes[(int) ((startIndex + 1) & 3)],
-            recentHashes[(int) ((startIndex + 2) & 3)],
-            recentHashes[(int) ((startIndex + 3) & 3)]
-        );
-
-        ArrayDeque<Long> starts = occurrences.computeIfAbsent(sequence, ignored -> new ArrayDeque<>());
-        if (detectedPeriod == 0 && retainedTicks >= CONFIRMATION_TICKS * 2 && !starts.isEmpty()) {
-            long previousStart = starts.peekLast();
-            long period = startIndex - previousStart;
-            if (period > 0 && period <= MAX_TICKS) {
-                detectedPeriod = (int) period;
-                detectedFirstRepeatTick = recentTicks[(int) (startIndex & 3)];
-            }
-        }
-        starts.addLast(startIndex);
-        windows.addLast(new Window(sequence, startIndex));
+        hashes[(int) (samples % MAX_TICKS)] = stateHash;
+        samples++;
     }
 
     public OptionalInt period() {
         return detectedPeriod == 0 ? OptionalInt.empty() : OptionalInt.of(detectedPeriod);
     }
 
+    /** Start of the second occurrence in the currently matching suffix. */
     public OptionalLong firstRepeatTick() {
         return detectedPeriod == 0 ? OptionalLong.empty() : OptionalLong.of(detectedFirstRepeatTick);
     }
-
-    private record Sequence(long first, long second, long third, long fourth) {}
-    private record Window(Sequence sequence, long startIndex) {}
 }

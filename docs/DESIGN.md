@@ -9,7 +9,7 @@ Anything not marked is design intent and still unchecked.
 Show where TNT and projectiles will go as a live path in the world. The path updates when the machine that launches them is edited, for example when a piston is added to a duper or compressor.
 
 ## Scope
-- Client-only install. Works in singleplayer (and a LAN world you host) by using the built-in server. Multiplayer is out of scope.
+- Original scope: client-only install in singleplayer (and a LAN world you host), using the built-in server. Superseded for server support by "Server modes" below; players and mob-AI simulation remain excluded.
 - Nether portals are out of scope. A path that reaches a portal ends there, marked "portal: not simulated."
 
 ## Pipeline
@@ -923,3 +923,21 @@ Code: `CauseTracker.frozenKind/onLevelTickEnd/onExplosionStart/onExplosionPush` 
 **R8. Order of work:** close the undo-log gaps (scheduled ticks, block events, entity hurt/push snapshot, `setChanged` snapshot), then 1c (read footprint with the `BlockCollisions` hook and the "below FULL: no collision" event); commit after each part.
 
 **R9. Test setup vs real recording.** Force-loading in tests is fine; the real recording must never force-load or change ticket levels (the ghost copies real ticket levels).
+
+
+## Testing branch: repetition helper validation
+
+`CycleDetector` requires consecutive tick samples (gaps are rejected), so its period is in game ticks. Evidence requires three complete periods and at least four matching repeated samples; a later mismatch revokes the result. `firstRepeatTick` names the start of the second occurrence in the current matching suffix. Retention is bounded to 20000 samples. Fingerprints alone cannot prove that the complete machine state repeats: scheduled work, block/entity data, random state and clock phases matter. The helper therefore must not independently stop recordings. The owner selected informational reporting with the existing tick limit; production machine-state sampling/reporting remains unfinished.
+
+The two helper GameTest classes existed but were absent from the test mod's entrypoint. They are now registered. JDK 25 standalone baseline probes reproduced sample-distance periods for skipped ticks and permanent acceptance of divergent four-hash prefixes. Regression GameTests now cover both. Validation in this checkout: official `genSources` passed; baseline `build` passed 122 server tests, loot alone passed; after registration and the helper fix, the full server run passed 134 tests, cycle alone 8, segment alone 5, stuck arrow alone 1. Stress investigation is ongoing; these passes do not resolve the historical flakes.
+
+
+## Server modes (owner-authorized expansion)
+
+Two modes: server-and-client installation transfers finished machine predictions; client-only installation on an unmodified server estimates trajectories of received entities. The server retains `/path` permission checks (operator level 2 or singleplayer owner). Recordings still fire the real machine and undo only tracked changes. Players are not copied or restored. The ghost model's previous limits remain.
+
+`ServerSnapshots` encodes the latest snapshot with lossless `SavedCodec` flight data, origin, and area geometry. Versioned S2C payloads contain at most 24 KiB each, at most two per player per server tick. Compressed transfer limit 8 MiB, decoded NBT accounting limit 64 MiB. Clients advertise a receiver through Fabric networking; no C2S world-edit channel is added. Joins receive the latest data or an empty server marker. Reassembly publishes only complete snapshots. Client and server stores are separate even in a shared JVM. Integrated clients keep the existing direct handoff. Remote live entity readouts, saved-path visibility and visual-setting commands are not synchronized.
+
+`Estimates` only uses client-visible state, supports TNT/arrows/tridents/pearls/snowballs/eggs/potions, and never registers simulation copies in the world. At most 32 visible entities are retained, one refreshed per client tick, at most 160 simulated ticks with a 2 ms tick-loop budget (copy construction is outside it). Existing PreviewSim suppresses effects. Official generated 26.2 `PrimedTnt.tick` (:100-122) does not explode on the client; `Projectile.canHitEntity` (:318) now excludes the original copy's UUID during simulation, while `ProjectileHitMixin` already suppresses hit handlers. Estimates are labelled, cannot be pinned, and do not simulate explosions or machine chains. Network latency, server modifications and unloaded client chunks limit accuracy.
+
+Validation of server modes on Temurin 25.0.5 / Gradle 9.8.2: official `genSources` passed; transport-focused server tests 2/2 passed; two `build` runs each passed all 137 server GameTests; final Xvfb run completed all 9 configured client tests, including a real dedicated-server socket connection, lossless received coordinates, TNT-copy immutability, projectile-original exclusion and disconnect cleanup. Client failures retained: first run's manually constructed fixture lacked an entity ID; later strengthened test incorrectly rejected all entity hits (including legitimate later hits). It now checks the hit target's UUID. A focused diagnostic passed, and the final full run passed with a legitimate hit at t+45 on an entity other than the original projectile. No unmodified-server connection was tested end to end: the estimate simulation was tested on a remote client connected to the modded dedicated test server. The earlier stressed-suite MachineCommandTest second-recording difference remains unresolved (2/3 full stress runs passed before this feature work).
